@@ -13,6 +13,13 @@
 #include <memory>
 #include <vector>
 
+// Qt defines `slots` as a preprocessor macro.  This helper is included only
+// from .cpp files after QObject-derived class declarations, so it is safe to
+// remove that macro here and use normal C++ identifiers without collisions.
+#ifdef slots
+#undef slots
+#endif
+
 // l1_postsignalling contains several raw pointers.  A shallow copy is safe
 // only while the producer is blocked.  The asynchronous DSP pipeline needs
 // independent storage for the fields consumed by the downstream stages.
@@ -48,7 +55,7 @@ public:
         value.dyn_next.aux_private_dyn = dynNextAux.empty() ? nullptr : dynNextAux.data();
 
         // RF signalling is not consumed by the deinterleaver/FEC/BBFRAME
-        // chain.  Keep the original pointer for compatibility; its owner is
+        // chain. Keep the original pointer for compatibility; its owner is
         // p2_symbol and it remains allocated for the lifetime of that stage.
         value.rf = source.rf;
     }
@@ -67,7 +74,7 @@ private:
     std::vector<int> dynNextAux;
 };
 
-// RAII slot for a bounded queued stage.  If a queued metacall is discarded
+// RAII slot for a bounded queued stage. If a queued metacall is discarded
 // during shutdown, destruction of the captured permit still releases the
 // semaphore, so a later restart cannot inherit a permanently reduced queue.
 class async_queue_permit
