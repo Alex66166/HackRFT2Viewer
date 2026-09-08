@@ -47,6 +47,22 @@ public:
             dynNextAux.assign(source.dyn_next.aux_private_dyn,
                               source.dyn_next.aux_private_dyn + auxCount);
 
+        // A multiplex with more than one PLP normally contains a common PLP
+        // (plp_type == 0) plus one or more data PLPs.  The UI/BBFRAME layer
+        // already auto-selects a non-common PLP for transport stream output,
+        // but until now the expensive QAM -> LDPC -> BCH chain still decoded
+        // the common PLP as well.  On the observed 2-PLP multiplex this nearly
+        // doubles FEC work, causes the HackRF I/Q queue to overflow, and then
+        // the resulting sample discontinuities force LDPC to burn all trials
+        // on corrupt frames.  Mark only common PLPs invalid for the downstream
+        // QAM/FEC copy; static L1 signalling itself is left untouched.
+        if (plpCount > 1) {
+            for (auto &entry : plp) {
+                if (entry.plp_type == 0)
+                    entry.plp_mod = -1;
+            }
+        }
+
         value.plp = plp.empty() ? nullptr : plp.data();
         value.aux = aux.empty() ? nullptr : aux.data();
         value.dyn.plp = dynPlp.empty() ? nullptr : dynPlp.data();
