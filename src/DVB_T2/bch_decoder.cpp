@@ -13,6 +13,15 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "bch_decoder.h"
+#include "async_pipeline_payload.h"
+
+namespace {
+QSemaphore &bbQueueSlots()
+{
+    static QSemaphore slots(16);
+    return slots;
+}
+}
 
 //------------------------------------------------------------------------------------------
 bch_decoder::bch_decoder(QObject *parent) : QObject(parent)
@@ -29,7 +38,7 @@ bch_decoder::bch_decoder(QObject *parent) : QObject(parent)
     deheader->moveToThread(thread);
     connect(this, &bch_decoder::bit_descramble, deheader, &bb_de_header::execute, Qt::BlockingQueuedConnection);
     connect(thread, &QThread::finished, deheader, &QObject::deleteLater);
-    thread->start();
+    thread->start(QThread::HighPriority);
     // Ensure its event loop is running before immediate stop/restart can occur.
     QMetaObject::invokeMethod(deheader,[]{},Qt::BlockingQueuedConnection);
 }
@@ -129,25 +138,23 @@ void bch_decoder::execute(int *_idx_plp_simd, l1_postsignalling _l1_post, int _l
         int corrected=corrector.correct(in+j,n_bch,k_bch,fec_type!=FEC_FRAME_NORMAL);
         if(corrected<0) { ++failedFrames; ++n; continue; }
         correctedBits+=quint64(corrected);
-        for (int i = 0; i < k_bch; ++i) {
-            out[i] = in[j + i] ^ descrambler[i];
-        }
-        if(swap_buffer) {
-            swap_buffer = false;
 
-            emit bit_descramble(plp_id[n], l1_post, k_bch, buffer_a);
+        auto bbBits = std::make_shared<std::vector<uint8_t>>(static_cast<size_t>(k_bch));
+        for (int i = 0; i < k_bch; ++i)
+            (*bbBits)[static_cast<size_t>(i)] = in[j + i] ^ descrambler[i];
 
-            ++n;
-            out = buffer_b;
-        }
-        else {
-            swap_buffer = true;
-
-            emit bit_descramble(plp_id[n], l1_post, k_bch, buffer_b);
-
-            ++n;
-            out = buffer_a;
-        }
+        const int index = plp_id[n];
+        auto ownedPost = std::make_shared<owned_l1_post>(l1_post);
+        auto permit = acquire_async_queue_slot(bbQueueSlots());
+        bb_de_header *receiver = deheader;
+        QMetaObject::invokeMethod(receiver,
+            [receiver, index, ownedPost, bbBits, permit] {
+                (void)permit;
+                receiver->execute(index, ownedPost->value,
+                                  static_cast<int>(bbBits->size()), bbBits->data());
+            },
+            Qt::QueuedConnection);
+        ++n;
     }
 
     const quint64 total=frames,fixed=correctedBits,failed=failedFrames;

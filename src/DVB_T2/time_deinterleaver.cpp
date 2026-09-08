@@ -13,8 +13,19 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "time_deinterleaver.h"
+#include "async_pipeline_payload.h"
 
 #include <immintrin.h>
+
+namespace {
+QSemaphore &qamQueueSlots()
+{
+    // Enough elasticity for short LDPC bursts without allowing an
+    // unbounded queue of large TI blocks.
+    static QSemaphore slots(8);
+    return slots;
+}
+}
 
 //-------------------------------------------------------------------------------------------
 time_deinterleaver::time_deinterleaver(QMutex *_mutex, QObject *parent) :
@@ -28,7 +39,7 @@ time_deinterleaver::time_deinterleaver(QMutex *_mutex, QObject *parent) :
     qam->moveToThread(thread);
     connect(this, &time_deinterleaver::ti_block, qam, &llr_demapper::execute,Qt::BlockingQueuedConnection);
     connect(thread, &QThread::finished, qam, &QObject::deleteLater);
-    thread->start();
+    thread->start(QThread::HighPriority);
     // Ensure its event loop is running before immediate stop/restart can occur.
     QMetaObject::invokeMethod(qam,[]{},Qt::BlockingQueuedConnection);
 }
@@ -286,6 +297,27 @@ void time_deinterleaver::execute(int _len_in, complex* _ofdm_cell)
 {
     if(!flag_start || _len_in<=0) return;
 
+    // The old implementation used a BlockingQueuedConnection all the way
+    // through QAM -> LDPC -> BCH -> BBFRAME.  That made this function wait
+    // for the complete FEC chain and stalled the real-time demodulator.  A
+    // TI block is now copied once into owned storage and queued to the QAM
+    // thread.  The semaphore keeps memory bounded and becomes back-pressure
+    // only if the downstream pipeline genuinely cannot keep up.
+    auto queueTiBlock = [this](int count, const complex *source, int index) {
+        if(count <= 0 || source == nullptr || qam == nullptr) return;
+        auto cells = std::make_shared<std::vector<complex>>(source, source + count);
+        auto post = std::make_shared<owned_l1_post>(l1_post);
+        auto permit = acquire_async_queue_slot(qamQueueSlots());
+        llr_demapper *receiver = qam;
+        QMetaObject::invokeMethod(receiver,
+            [receiver, cells, post, permit, index] {
+                (void)permit;
+                receiver->execute(static_cast<int>(cells->size()),
+                                  cells->data(), index, post->value);
+            },
+            Qt::QueuedConnection);
+    };
+
     int num_cells = _len_in;
     complex* ofdm_cell = &_ofdm_cell[0];
     if(start_t2_frame == true) {
@@ -332,24 +364,16 @@ void time_deinterleaver::execute(int _len_in, complex* _ofdm_cell)
 
                 }
 
-                
-
                 if(swap_buffers) {
                     swap_buffers = false;
                     time_deint_cell = buffer_b;
-
-                    emit ti_block(ti_block_size, buffer_a, plp_id, l1_post);
-
+                    queueTiBlock(ti_block_size, buffer_a, plp_id);
                 }
                 else {
                     swap_buffers = true;
                     time_deint_cell = buffer_a;
-
-                    emit ti_block(ti_block_size, buffer_b, plp_id, l1_post);
-
+                    queueTiBlock(ti_block_size, buffer_b, plp_id);
                 }
-
-                
 
                 if(++idx_time_il == n_ti[plp_id]) {
                     idx_time_il = 0;
@@ -372,9 +396,6 @@ void time_deinterleaver::execute(int _len_in, complex* _ofdm_cell)
         }
         ++idx_cell;
     }
-
-    
-
 }
 //-------------------------------------------------------------------------------------------
 void time_deinterleaver::stop()

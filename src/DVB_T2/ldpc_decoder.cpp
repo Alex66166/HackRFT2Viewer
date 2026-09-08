@@ -13,10 +13,19 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "ldpc_decoder.h"
+#include "async_pipeline_payload.h"
+
 #include <cstring>
 
 // #include <iostream>
 
+namespace {
+QSemaphore &bchQueueSlots()
+{
+    static QSemaphore slots(8);
+    return slots;
+}
+}
 
 constexpr int DVB_T2_TABLE_NORMAL_C1_2::DEG[];
 constexpr int DVB_T2_TABLE_NORMAL_C1_2::LEN[];
@@ -125,7 +134,7 @@ ldpc_decoder::ldpc_decoder(QObject *parent) : QObject(parent)
     decoder->moveToThread(thread);
     connect(this, &ldpc_decoder::bit_bch, decoder, &bch_decoder::execute, Qt::BlockingQueuedConnection);
     connect(thread, &QThread::finished, decoder, &QObject::deleteLater);
-    thread->start();
+    thread->start(QThread::HighPriority);
     // Ensure its event loop is running before immediate stop/restart can occur.
     QMetaObject::invokeMethod(decoder,[]{},Qt::BlockingQueuedConnection);
 }
@@ -254,31 +263,29 @@ void ldpc_decoder::execute(int* _idx_plp_simd, l1_postsignalling _l1_post, int _
 
     int trials = TRIALS;
     (*p_decode)(simd,simd+k_ldpc,trials,blocks);
+
+    auto bchBits = std::make_shared<std::vector<uint8_t>>(
+        static_cast<size_t>(k_ldpc) * static_cast<size_t>(blocks));
+    uint8_t *bchOut = bchBits->data();
     int8_t *s;
     for(int j = 0; j < blocks; ++j) {
         for (int i = 0; i < k_ldpc; ++i) {
             s = reinterpret_cast<code_type*>(simd + i);
-            if(s[j] < 0) *bch_fec++ = 1;
-            else         *bch_fec++ = 0;
+            *bchOut++ = s[j] < 0 ? 1 : 0;
         }
     }
 
-    int len_out = k_ldpc * blocks;
-    if(swap_buffer) {
-        swap_buffer = false;
-
-        emit bit_bch(plp_id, l1_post, len_out, buffer_a);
-
-        bch_fec = buffer_b;
-    }
-    else {
-        swap_buffer = true;
-
-        emit bit_bch(plp_id, l1_post, len_out, buffer_b);
-
-        bch_fec = buffer_a;
-    }
-
+    auto ids = std::make_shared<std::vector<int>>(plp_id, plp_id + blocks);
+    auto ownedPost = std::make_shared<owned_l1_post>(l1_post);
+    auto permit = acquire_async_queue_slot(bchQueueSlots());
+    bch_decoder *receiver = decoder;
+    QMetaObject::invokeMethod(receiver,
+        [receiver, ids, ownedPost, bchBits, permit] {
+            (void)permit;
+            receiver->execute(ids->data(), ownedPost->value,
+                              static_cast<int>(bchBits->size()), bchBits->data());
+        },
+        Qt::QueuedConnection);
 }
 //------------------------------------------------------------------------------------------
 void ldpc_decoder::stop()

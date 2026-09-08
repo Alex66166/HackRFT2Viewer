@@ -13,9 +13,18 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "llr_demapper.h"
+#include "async_pipeline_payload.h"
 
 //#include <QDebug>
 #include <immintrin.h>
+
+namespace {
+QSemaphore &ldpcQueueSlots()
+{
+    static QSemaphore slots(8);
+    return slots;
+}
+}
 
 #if defined(_MSC_VER)
 #define ALIGNED_(x) __declspec(align(x))
@@ -81,7 +90,7 @@ llr_demapper::llr_demapper(QMutex* _mutex, QObject* parent) :
     decoder->moveToThread(thread);
     connect(this, &llr_demapper::soft_multiplexer_de_twist, decoder, &ldpc_decoder::execute, Qt::BlockingQueuedConnection);
     connect(thread, &QThread::finished, decoder, &QObject::deleteLater);
-    thread->start();
+    thread->start(QThread::HighPriority);
     // Ensure its event loop is running before immediate stop/restart can occur.
     QMetaObject::invokeMethod(decoder,[]{},Qt::BlockingQueuedConnection);
 }
@@ -160,9 +169,10 @@ void llr_demapper::execute(int count, complex *cells, int index, l1_postsignalli
     for(int first=0;first<totalBlocks;first+=SIZEOF_SIMD) {
         const int blocks=qMin(SIZEOF_SIMD,totalBlocks-first);
         int indices[SIZEOF_SIMD]{};
+        auto soft = std::make_shared<std::vector<int8_t>>(static_cast<size_t>(blocks) * static_cast<size_t>(fec));
         for(int block=0;block<blocks;++block) {
             indices[block]=index;
-            int8_t *output=buffer_a+block*fec;
+            int8_t *output=soft->data()+block*fec;
             int bit=0;
             for(int c=0;c<cellsPerFec;++c) {
                 const complex sample=cells[(first+block)*cellsPerFec+c]*rotation;
@@ -179,7 +189,18 @@ void llr_demapper::execute(int count, complex *cells, int index, l1_postsignalli
                 }
             }
         }
-        emit soft_multiplexer_de_twist(indices,post,blocks*fec,buffer_a);
+
+        auto ids = std::make_shared<std::vector<int>>(indices, indices + blocks);
+        auto ownedPost = std::make_shared<owned_l1_post>(post);
+        auto permit = acquire_async_queue_slot(ldpcQueueSlots());
+        ldpc_decoder *receiver = decoder;
+        QMetaObject::invokeMethod(receiver,
+            [receiver, ids, ownedPost, soft, permit] {
+                (void)permit;
+                receiver->execute(ids->data(), ownedPost->value,
+                                  static_cast<int>(soft->size()), soft->data());
+            },
+            Qt::QueuedConnection);
     }
 }
 void llr_demapper::stop()
