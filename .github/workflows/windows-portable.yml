@@ -45,6 +45,7 @@ jobs:
             mingw-w64-x86_64-qt5-tools
             mingw-w64-x86_64-angleproject
             mingw-w64-x86_64-binutils
+            mingw-w64-x86_64-ntldd
 
       - name: Build release
         run: |
@@ -74,6 +75,43 @@ jobs:
           cp /mingw64/bin/libgcc_s_seh-1.dll "$DIST/" || true
           cp /mingw64/bin/libstdc++-6.dll "$DIST/" || true
           cp /mingw64/bin/libwinpthread-1.dll "$DIST/" || true
+
+      - name: Collect all MinGW runtime DLL dependencies
+        run: |
+          set -euxo pipefail
+          DIST=build-portable/HackRFT2Viewer-Portable-1.4.1-DIAG
+          MINGW_BIN_WIN="$(cygpath -w /mingw64/bin)"
+          NTLDD=/mingw64/bin/ntldd.exe
+
+          collect_deps() {
+            local target="$1"
+            local target_win
+            target_win="$(cygpath -w "$target")"
+
+            "$NTLDD" -R -D "$MINGW_BIN_WIN" "$target_win" 2>/dev/null \
+              | sed -nE 's/^[[:space:]]*[^=]+=>[[:space:]]+(.+\.dll)[[:space:]]+\(0x[0-9A-Fa-f]+\).*$/\1/p' \
+              | while IFS= read -r dep_win; do
+                  dep_unix="$(cygpath -u "$dep_win" 2>/dev/null || true)"
+                  case "$dep_unix" in
+                    /mingw64/bin/*.dll)
+                      cp -n "$dep_unix" "$DIST/" || true
+                      ;;
+                  esac
+                done
+          }
+
+          # Scan the EXE and every Qt/plugin DLL produced by windeployqt.
+          # ntldd -R follows dependencies recursively, so this also brings in
+          # harfbuzz, freetype, glib, png, brotli, pcre2 and other MinGW runtime DLLs.
+          while IFS= read -r -d '' f; do
+            collect_deps "$f"
+          done < <(find "$DIST" -type f \( -iname '*.exe' -o -iname '*.dll' \) -print0)
+
+          echo "=== Bundled runtime DLLs ==="
+          find "$DIST" -maxdepth 1 -type f -iname '*.dll' -printf '%f\n' | sort
+
+          # Hard fail if the dependency that exposed the packaging problem is absent.
+          test -f "$DIST/libharfbuzz-0.dll"
 
       - name: Add docs and licenses
         run: |
