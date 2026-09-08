@@ -1,0 +1,463 @@
+diff -ruN '--exclude=.git' src140ci/HackRFT2Viewer-1.4.0-src/.github/workflows/windows-portable.yml HackRFT2Viewer-1.4.1-DIAG-src/.github/workflows/windows-portable.yml
+--- src140ci/HackRFT2Viewer-1.4.0-src/.github/workflows/windows-portable.yml	2026-09-08 12:15:39.000000000 +0000
++++ HackRFT2Viewer-1.4.1-DIAG-src/.github/workflows/windows-portable.yml	2026-09-08 15:33:23.297265010 +0000
+@@ -37,13 +37,13 @@
+             if [[ -f "$p" ]]; then EXE="$p"; break; fi
+           done
+           test -n "$EXE"
+-          mkdir -p build-portable/HackRFT2Viewer-Portable-1.4.0
+-          cp "$EXE" build-portable/HackRFT2Viewer-Portable-1.4.0/HackRFT2Viewer.exe
++          mkdir -p build-portable/HackRFT2Viewer-Portable-1.4.1-DIAG
++          cp "$EXE" build-portable/HackRFT2Viewer-Portable-1.4.1-DIAG/HackRFT2Viewer.exe
+ 
+       - name: Deploy Qt runtime
+         run: |
+           set -euxo pipefail
+-          DIST=build-portable/HackRFT2Viewer-Portable-1.4.0
++          DIST=build-portable/HackRFT2Viewer-Portable-1.4.1-DIAG
+           /mingw64/bin/windeployqt.exe --release --no-translations "$DIST/HackRFT2Viewer.exe"
+           cp src/fftw3/libfftw3f-3.dll "$DIST/"
+           cp src/third_party/libusb/libusb-1.0.dll "$DIST/"
+@@ -56,8 +56,8 @@
+       - name: Add docs and licenses
+         run: |
+           set -euxo pipefail
+-          DIST=build-portable/HackRFT2Viewer-Portable-1.4.0
+-          for f in README-RU.md VALIDATION.md CHANGELOG.md THIRD-PARTY-NOTICES.md HACKRF-LICENSE.txt COPYING-GPL-3.0.txt; do
++          DIST=build-portable/HackRFT2Viewer-Portable-1.4.1-DIAG
++          for f in README-RU.md VALIDATION.md CHANGELOG.md DIAGNOSTIC-RUN-RU.txt THIRD-PARTY-NOTICES.md HACKRF-LICENSE.txt COPYING-GPL-3.0.txt; do
+             [[ -f "$f" ]] && cp "$f" "$DIST/"
+           done
+           cp -r licenses "$DIST/licenses"
+@@ -75,7 +75,7 @@
+           $tmp = Join-Path $env:RUNNER_TEMP 'vlc-extract'
+           Expand-Archive -Path $zip -DestinationPath $tmp -Force
+           $src = Join-Path $tmp 'vlc-3.0.23'
+-          $dst = Join-Path $PWD 'build-portable/HackRFT2Viewer-Portable-1.4.0/vlc'
++          $dst = Join-Path $PWD 'build-portable/HackRFT2Viewer-Portable-1.4.1-DIAG/vlc'
+           Copy-Item -Recurse -Force $src $dst
+ 
+       - name: Package and checksum
+@@ -83,19 +83,19 @@
+         run: |
+           $ErrorActionPreference = 'Stop'
+           $base = Join-Path $PWD 'build-portable'
+-          $dir = Join-Path $base 'HackRFT2Viewer-Portable-1.4.0'
+-          $zip = Join-Path $base 'HackRFT2Viewer-Portable-1.4.0.zip'
++          $dir = Join-Path $base 'HackRFT2Viewer-Portable-1.4.1-DIAG'
++          $zip = Join-Path $base 'HackRFT2Viewer-Portable-1.4.1-DIAG.zip'
+           Compress-Archive -Path $dir -DestinationPath $zip -CompressionLevel Optimal -Force
+           $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+-          "$hash  HackRFT2Viewer-Portable-1.4.0.zip" | Set-Content -Encoding ascii (Join-Path $base 'SHA256-1.4.0.txt')
++          "$hash  HackRFT2Viewer-Portable-1.4.1-DIAG.zip" | Set-Content -Encoding ascii (Join-Path $base 'SHA256-1.4.1-DIAG.txt')
+           Get-Item $zip | Format-List FullName,Length
+-          Get-Content (Join-Path $base 'SHA256-1.4.0.txt')
++          Get-Content (Join-Path $base 'SHA256-1.4.1-DIAG.txt')
+ 
+       - name: Upload portable artifact
+         uses: actions/upload-artifact@v4
+         with:
+-          name: HackRFT2Viewer-Portable-1.4.0
++          name: HackRFT2Viewer-Portable-1.4.1-DIAG
+           path: |
+-            build-portable/HackRFT2Viewer-Portable-1.4.0.zip
+-            build-portable/SHA256-1.4.0.txt
++            build-portable/HackRFT2Viewer-Portable-1.4.1-DIAG.zip
++            build-portable/SHA256-1.4.1-DIAG.txt
+           if-no-files-found: error
+diff -ruN '--exclude=.git' src140ci/HackRFT2Viewer-1.4.0-src/DIAGNOSTIC-RUN-RU.txt HackRFT2Viewer-1.4.1-DIAG-src/DIAGNOSTIC-RUN-RU.txt
+--- src140ci/HackRFT2Viewer-1.4.0-src/DIAGNOSTIC-RUN-RU.txt	1970-01-01 00:00:00.000000000 +0000
++++ HackRFT2Viewer-1.4.1-DIAG-src/DIAGNOSTIC-RUN-RU.txt	2026-09-08 15:33:22.771334515 +0000
+@@ -0,0 +1,30 @@
++HackRF T2 Viewer 1.4.1-DIAG — внутренний профилировщик DSP
++
++Эта сборка нужна только для поиска причины DSP 100%/очереди/drops.
++Она автоматически создаёт рядом с HackRFT2Viewer.exe файл:
++
++  HackRFT2_stage_profile_YYYYMMDD_HHMMSS.csv
++
++Что делать:
++1. Запустить HackRFT2Viewer.exe.
++2. Выбрать проблемную частоту и тот же sample rate, на котором возникает перегрузка.
++3. Нажать «Начать приём» и оставить программу работать 30–60 секунд, не менять частоту/усиление.
++4. Остановить приём и закрыть программу.
++5. Прислать созданный HackRFT2_stage_profile_*.csv.
++
++CSV показывает время по участкам:
++- frontend_stats — расчёт RMS/peak/clipping;
++- iq_correct — коррекция I/Q;
++- coarse_rotate — цифровой сдвиг частоты до демодулятора;
++- demod_input_rotate — внутренняя частотная/фазовая коррекция;
++- resampler — перевод к DVB-T2 elementary sample rate;
++- p1 — поиск/декодирование P1;
++- guard — определение защитного интервала;
++- fft — OFDM FFT;
++- p2 — P2/L1;
++- data_demod / fc_demod — OFDM data/FC;
++- downstream_data_wait — время, которое верхний DSP поток ждёт синхронную цепочку
++  time deinterleaver -> QAM -> LDPC -> BCH -> BBFRAME;
++- downstream_control_wait — синхронные операции L1/deinterleaver.
++
++Важно: это диагностическая сборка. Небольшая нагрузка от таймеров и записи одной CSV-строки примерно раз в 0.5 с ожидаема.
+diff -ruN '--exclude=.git' src140ci/HackRFT2Viewer-1.4.0-src/src/DVB_T2/dvbt2_demodulator.cpp HackRFT2Viewer-1.4.1-DIAG-src/src/DVB_T2/dvbt2_demodulator.cpp
+--- src140ci/HackRFT2Viewer-1.4.0-src/src/DVB_T2/dvbt2_demodulator.cpp	2026-09-08 11:51:11.000000000 +0000
++++ HackRFT2Viewer-1.4.1-DIAG-src/src/DVB_T2/dvbt2_demodulator.cpp	2026-09-08 15:32:05.115971899 +0000
+@@ -17,9 +17,19 @@
+ #include "DSP/guard_acquisition.h"
+ 
+ #include <immintrin.h>
++#include <chrono>
+ 
+ #include "DSP/fast_math.h"
+ 
++namespace {
++using profile_clock = std::chrono::steady_clock;
++inline quint64 profile_ns(profile_clock::time_point t0)
++{
++    return static_cast<quint64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
++        profile_clock::now() - t0).count());
++}
++}
++
+ //-------------------------------------------------------------------------------------------
+ dvbt2_demodulator::dvbt2_demodulator(float _level_min, float _sample_rate, QObject *parent) :
+     QObject(parent),
+@@ -90,6 +100,13 @@
+     delete [] buffer_sym;
+ }
+ //-------------------------------------------------------------------------------------------
++dvbt2_stage_profile dvbt2_demodulator::take_stage_profile()
++{
++    const dvbt2_stage_profile result = stage_profile;
++    stage_profile = {};
++    return result;
++}
++//-------------------------------------------------------------------------------------------
+ void dvbt2_demodulator::reset()
+ {
+     exp_avg_dc_real.reset();
+@@ -155,18 +172,25 @@
+         }
+         const complex *in = _in + idx_in;
+ 
++        const auto t_rotate = profile_clock::now();
+         rotate_samples(in,out_derotate_sample,chunk,frequency_nco,-double(frequency_est_filtered),phase_nco);
++        stage_profile.inputRotateNs += profile_ns(t_rotate);
+         idx_in += chunk;
+         //___timing synchronization___
+         // Convert directly from the HackRF rate to the DVB-T2 elementary
+         // rate.  This replaces the old Farrow -> ~18.285 MS/s -> 64-tap /2
+         // path, whose expensive FIR work stayed almost constant at 8 MS/s.
++        const auto t_resampler = profile_clock::now();
+         const int len_out_resampled = direct_resampler->execute(
+                     chunk, out_derotate_sample, direct_input_step,
+                     out_resampled, out_resampled_capacity);
++        stage_profile.resamplerNs += profile_ns(t_resampler);
+         //___demodulations and get offset synchronization__
+-        if(len_out_resampled > 0)
++        if(len_out_resampled > 0) {
++            const auto t_symbols = profile_clock::now();
+             symbol_acquisition(len_out_resampled, out_resampled, signal_);
++            stage_profile.symbolAcquireNs += profile_ns(t_symbols);
++        }
+         if(signal_->reset) break;
+ 
+     }
+@@ -190,9 +214,13 @@
+         if(next_symbol_type == SYMBOL_TYPE_P1) {
+ 
+             bool p1_decoded = false;
+-            if(p1_demodulator->execute(level_min, len_in, in, consume, symbol_synchronize,
++            const auto t_p1 = profile_clock::now();
++            const bool p1_detected = p1_demodulator->execute(level_min, len_in, in, consume, symbol_synchronize,
+                                        buffer_sym, idx_buffer_sym, dvbt2, signal_->coarse_freq_offset,
+-                                       p1_decoded, signal_->p1_reset)) {
++                                       p1_decoded, signal_->p1_reset);
++            stage_profile.p1Ns += profile_ns(t_p1);
++            ++stage_profile.p1Calls;
++            if(p1_detected) {
+                 if(p1_decoded) {
+                     ++p1Matches;
+                     if(dvbt2.preamble!=T2_SISO || (dvbt2.fft_mode!=FFTSIZE_16K && dvbt2.fft_mode!=FFTSIZE_32K && dvbt2.fft_mode!=FFTSIZE_16K_T2GI && dvbt2.fft_mode!=FFTSIZE_32K_T2GI)) {
+@@ -237,7 +265,9 @@
+             }
+ 
+             if(!demodulator_init){
++                const auto t_guard = profile_clock::now();
+                 const auto estimate=acquire_guard(buffer_sym,dvbt2.fft_size);
++                stage_profile.guardNs += profile_ns(t_guard);
+                 measuredGuard=estimate.samples;cpConfidence=estimate.confidence;
+                 if(estimate.samples<=0 || estimate.confidence<.12f){
+                     next_symbol_type=SYMBOL_TYPE_P1;est_chunk=0;continue;
+@@ -249,7 +279,10 @@
+             }else{
+                 memcpy(in_fft,buffer_sym+dvbt2.guard_interval_size,sizeof(complex)*dvbt2.fft_size);
+             }
++            const auto t_fft = profile_clock::now();
+             ofdm_cell = fft->execute();
++            stage_profile.fftNs += profile_ns(t_fft);
++            ++stage_profile.fftCalls;
+ 
+             est_chunk = 0;
+ 
+@@ -262,15 +295,16 @@
+         }
+         //________________________________________________________
+         if(next_symbol_type == SYMBOL_TYPE_DATA) {
++            const auto t_data = profile_clock::now();
+             complex* deinterleaved_cell = data_demodulator->execute(idx_symbol, ofdm_cell,
+                                                               sample_rate_est, phase_est);
++            stage_profile.dataDemodNs += profile_ns(t_data);
++            ++stage_profile.dataCalls;
+             if(deint_start) {
+ 
+-                
+-
++                const auto t_downstream = profile_clock::now();
+                 emit data(dvbt2.c_data, deinterleaved_cell);
+-
+-                
++                stage_profile.downstreamDataNs += profile_ns(t_downstream);
+ 
+             }
+             ++idx_symbol;
+@@ -280,14 +314,15 @@
+             }
+         }
+         else if(next_symbol_type == SYMBOL_TYPE_FC) {
++            const auto t_fc = profile_clock::now();
+             complex* deinterleaved_cell = fc_demod->execute(ofdm_cell, sample_rate_est, phase_est);
++            stage_profile.fcDemodNs += profile_ns(t_fc);
++            ++stage_profile.fcCalls;
+             if(deint_start) {
+ 
+-                
+-
++                const auto t_downstream = profile_clock::now();
+                 emit data(dvbt2.n_fc, deinterleaved_cell);
+-
+-                
++                stage_profile.downstreamDataNs += profile_ns(t_downstream);
+ 
+             }
+             next_symbol_type = SYMBOL_TYPE_P1;
+@@ -297,9 +332,12 @@
+             idx_symbol = 0;
+             bool crc32_l1_post = false;
+             symbol_synchronize = true;
++            const auto t_p2 = profile_clock::now();
+             complex* deinterleaved_cell = p2_demodulator->execute(dvbt2, demodulator_init, idx_symbol, ofdm_cell,
+                                                                   l1_pre, l1_post, crc32_l1_pre, crc32_l1_post,
+                                                                   sample_rate_est, phase_est, symbol_synchronize);
++            stage_profile.p2Ns += profile_ns(t_p2);
++            ++stage_profile.p2Calls;
+             if(crc32_l1_pre) {
+                 ++l1PreMatches;if(crc32_l1_post)++l1PostMatches;
+                 if(demodulator_init) {
+@@ -309,18 +347,18 @@
+                             if(l1PostMatches==1)emit receiver_stage(QStringLiteral("L1 найден: межкадровое перемежение PLP пока не поддерживается."));reset();signal_->reset=true;return;
+                         }
+                         if(!deint_start) {
++                            const auto t_control = profile_clock::now();
+                             QMetaObject::invokeMethod(deinterleaver,[this]{ deinterleaver->start(dvbt2,l1_pre,l1_post); },Qt::BlockingQueuedConnection);
++                            stage_profile.downstreamControlNs += profile_ns(t_control);
+                             deint_start = true;
+ 
+                             emit amount_plp(l1_post.num_plp);
+ 
+                         }
+ 
+-                        
+-
++                        const auto t_control = profile_clock::now();
+                         emit l1_dyn_execute(l1_post, dvbt2.c_p2, deinterleaved_cell);
+-
+-                        
++                        stage_profile.downstreamControlNs += profile_ns(t_control);
+ 
+                     }
+                     ++idx_symbol;
+diff -ruN '--exclude=.git' src140ci/HackRFT2Viewer-1.4.0-src/src/DVB_T2/dvbt2_demodulator.h HackRFT2Viewer-1.4.1-DIAG-src/src/DVB_T2/dvbt2_demodulator.h
+--- src140ci/HackRFT2Viewer-1.4.0-src/src/DVB_T2/dvbt2_demodulator.h	2026-09-08 11:48:12.000000000 +0000
++++ HackRFT2Viewer-1.4.1-DIAG-src/src/DVB_T2/dvbt2_demodulator.h	2026-09-08 15:31:37.465413596 +0000
+@@ -52,6 +52,28 @@
+     bool p1_reset = false;
+ };
+ 
++// Lightweight wall-clock profiler for the real-time DVB-T2 path.  All
++// counters are written and consumed on the demodulator thread, therefore no
++// atomics are required and profiling overhead stays very small.
++struct dvbt2_stage_profile {
++    quint64 inputRotateNs = 0;
++    quint64 resamplerNs = 0;
++    quint64 symbolAcquireNs = 0;
++    quint64 p1Ns = 0;
++    quint64 guardNs = 0;
++    quint64 fftNs = 0;
++    quint64 p2Ns = 0;
++    quint64 dataDemodNs = 0;
++    quint64 fcDemodNs = 0;
++    quint64 downstreamDataNs = 0;
++    quint64 downstreamControlNs = 0;
++    quint64 p1Calls = 0;
++    quint64 fftCalls = 0;
++    quint64 p2Calls = 0;
++    quint64 dataCalls = 0;
++    quint64 fcCalls = 0;
++};
++
+ class dvbt2_demodulator : public QObject
+ {
+     Q_OBJECT
+@@ -61,6 +83,7 @@
+     quint64 processedSamples=0,p1Matches=0,l1PreMatches=0,l1PostMatches=0,p2Attempts=0,l1PreErrors=0;
+     int measuredGuard=0;float cpConfidence=0;
+     void discontinuity();
++    dvbt2_stage_profile take_stage_profile();
+     explicit dvbt2_demodulator(float _level_min, float _sample_rate, QObject *parent = nullptr);
+     ~dvbt2_demodulator();
+ 
+@@ -87,6 +110,7 @@
+ private:
+     QThread* thread = nullptr;
+     QMutex* mutex_out;
++    dvbt2_stage_profile stage_profile;
+ 
+     id_device_t id_device;
+     int convert_input = 1;
+diff -ruN '--exclude=.git' src140ci/HackRFT2Viewer-1.4.0-src/src/rx_hackrf_pro.cpp HackRFT2Viewer-1.4.1-DIAG-src/src/rx_hackrf_pro.cpp
+--- src140ci/HackRFT2Viewer-1.4.0-src/src/rx_hackrf_pro.cpp	2026-09-08 11:50:35.000000000 +0000
++++ HackRFT2Viewer-1.4.1-DIAG-src/src/rx_hackrf_pro.cpp	2026-09-08 15:32:45.997948011 +0000
+@@ -7,13 +7,24 @@
+ #include "DSP/complex_rotator.h"
+ 
+ #include <QMutexLocker>
++#include <QCoreApplication>
++#include <QDateTime>
++#include <QTextStream>
+ 
+ #include <algorithm>
++#include <chrono>
+ #include <cmath>
+ #include <cstring>
+ #include <sstream>
+ 
+ namespace {
++using profile_clock = std::chrono::steady_clock;
++inline quint64 profileNs(profile_clock::time_point t0)
++{
++    return static_cast<quint64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
++        profile_clock::now() - t0).count());
++}
++
+ QString compactSerial(const read_partid_serialno_t &part)
+ {
+     return QStringLiteral("%1%2%3%4")
+@@ -215,6 +226,24 @@
+     m_settleSamples=int(m_settings.sampleRateHz*0.12);
+     m_coarsePhase=0.0;m_coarseHz=0.0;
+     m_lastSequence=0;m_lastDropCount=m_queueDrops.load();m_haveSequence=false;
++    m_profileStatsNs=m_profileIqNs=m_profileCoarseNs=m_profileDemodNs=m_profileSpectrumNs=0;
++    m_profileBlocks=0;
++    if(!m_stageProfileFile.isOpen()) {
++        m_stageProfilePath = QCoreApplication::applicationDirPath()
++            + QStringLiteral("/HackRFT2_stage_profile_%1.csv")
++                .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss")));
++        m_stageProfileFile.setFileName(m_stageProfilePath);
++        if(m_stageProfileFile.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
++            QTextStream out(&m_stageProfileFile);out.setCodec("UTF-8");
++            out << "elapsed_ms,input_samples,blocks,usb_msps,processed_msps,backlog,drops,drops_interval,"
++                   "frontend_stats_ms,iq_correct_ms,coarse_rotate_ms,demod_outer_ms,spectrum_ms,"
++                   "demod_input_rotate_ms,resampler_ms,symbol_acquire_ms,p1_ms,guard_ms,fft_ms,p2_ms,"
++                   "data_demod_ms,fc_demod_ms,downstream_data_wait_ms,downstream_control_wait_ms,"
++                   "p1_calls,fft_calls,p2_calls,data_calls,fc_calls,p1_matches,p2_attempts,l1_pre,l1_post,l1_pre_errors\n";
++            out.flush();
++            emit receiverStage(QStringLiteral("Внутренний профиль DSP: %1").arg(m_stageProfilePath));
++        }
++    }
+ }
+ void RxHackRfPro::captureIq(QString path)
+ {
+@@ -378,20 +407,29 @@
+     QElapsedTimer processing;processing.start();
+     const auto *samples=reinterpret_cast<const int8_t*>(bytes.constData());
+     const int count=bytes.size()/2;
++    const auto t_stats=profile_clock::now();
+     for(int i=0;i<bytes.size();++i){
+         int v=samples[i];m_peak=std::max(m_peak,std::abs(v));m_sumSquares+=quint64(v*v);
+         if(std::abs(v)>=126)++m_clippedComponents;
+     }
++    m_profileStatsNs += profileNs(t_stats);
+     m_metricSamples+=count;
+     m_block.resize(count);int gain=0;
++    const auto t_iq=profile_clock::now();
+     m_iqCorrect.execute(size_t(count),samples,m_block.data(),gain);
++    m_profileIqNs += profileNs(t_iq);
++    const auto t_coarse=profile_clock::now();
+     rotate_samples(m_block.data(),m_block.data(),count,m_coarsePhase,-2*M_PI*m_coarseHz/m_settings.sampleRateHz);
++    m_profileCoarseNs += profileNs(t_coarse);
+     if(m_settleSamples>0)m_settleSamples-=count;
+     else{
++        const auto t_demod=profile_clock::now();
+         m_demodulator->execute(count,m_block.data(),m_signal);
++        m_profileDemodNs += profileNs(t_demod);
+         if(m_signal->reset){m_signal->reset=false;m_signal->coarse_freq_offset=0;m_signal->frequency_changed=true;}
+         updateFromDemodulator();
+     }
++    ++m_profileBlocks;
+     m_dspNanoseconds+=processing.nsecsElapsed();
+     const qint64 elapsed=m_metricsTimer.elapsed();
+     if(elapsed<500)return;
+@@ -409,14 +447,38 @@
+     m.droppedLastInterval=m.droppedBuffers-m_lastDropCount;m_lastDropCount=m.droppedBuffers;
+     m.p2Attempts=m_demodulator->p2Attempts;m.l1PreErrors=m_demodulator->l1PreErrors;
+     m.guardSamples=m_demodulator->measuredGuard;m.cpConfidence=m_demodulator->cpConfidence;m.coarseCorrectionHz=m_coarseHz;
++    const auto demodProfile=m_demodulator->take_stage_profile();
+     emit metricsChanged(m);
+     if(count>=2048){
++        const auto t_spectrum=profile_clock::now();
+         for(int i=0;i<2048;++i)m_spectrumInput[i]=m_block[i]*float(0.5-0.5*std::cos(2*M_PI*i/2047));
+         complex *fft=m_spectrumFft->execute();QVector<float> power(2048);
+         for(int i=0;i<2048;++i)power[i]=10*std::log10(std::max(1.0e-16f,std::norm(fft[i])/(1024*1024.0f)));
+         emit inputSpectrum(power);
++        m_profileSpectrumNs += profileNs(t_spectrum);
++    }
++    if(m_stageProfileFile.isOpen()) {
++        const auto ms=[](quint64 ns){return double(ns)/1.0e6;};
++        QTextStream out(&m_stageProfileFile);out.setCodec("UTF-8");
++        out.setRealNumberNotation(QTextStream::FixedNotation);out.setRealNumberPrecision(3);
++        out << elapsed << ',' << m_metricSamples << ',' << m_profileBlocks << ','
++            << m.usbMegaSamplesPerSecond << ',' << m.dspMegaSamplesPerSecond << ','
++            << m.backlog << ',' << m.droppedBuffers << ',' << m.droppedLastInterval << ','
++            << ms(m_profileStatsNs) << ',' << ms(m_profileIqNs) << ',' << ms(m_profileCoarseNs) << ','
++            << ms(m_profileDemodNs) << ',' << ms(m_profileSpectrumNs) << ','
++            << ms(demodProfile.inputRotateNs) << ',' << ms(demodProfile.resamplerNs) << ','
++            << ms(demodProfile.symbolAcquireNs) << ',' << ms(demodProfile.p1Ns) << ','
++            << ms(demodProfile.guardNs) << ',' << ms(demodProfile.fftNs) << ','
++            << ms(demodProfile.p2Ns) << ',' << ms(demodProfile.dataDemodNs) << ','
++            << ms(demodProfile.fcDemodNs) << ',' << ms(demodProfile.downstreamDataNs) << ','
++            << ms(demodProfile.downstreamControlNs) << ',' << demodProfile.p1Calls << ','
++            << demodProfile.fftCalls << ',' << demodProfile.p2Calls << ',' << demodProfile.dataCalls << ','
++            << demodProfile.fcCalls << ',' << m.p1Matches << ',' << m.p2Attempts << ','
++            << m.l1PreMatches << ',' << m.l1PostMatches << ',' << m.l1PreErrors << '\n';
++        out.flush();
+     }
+     m_metricSamples=0;m_sumSquares=0;m_peak=0;m_clippedComponents=0;m_dspNanoseconds=0;m_metricsTimer.restart();
++    m_profileStatsNs=m_profileIqNs=m_profileCoarseNs=m_profileDemodNs=m_profileSpectrumNs=0;m_profileBlocks=0;
+ }
+ void RxHackRfPro::updateFromDemodulator()
+ {
+diff -ruN '--exclude=.git' src140ci/HackRFT2Viewer-1.4.0-src/src/rx_hackrf_pro.h HackRFT2Viewer-1.4.1-DIAG-src/src/rx_hackrf_pro.h
+--- src140ci/HackRFT2Viewer-1.4.0-src/src/rx_hackrf_pro.h	2026-09-08 11:50:35.000000000 +0000
++++ HackRFT2Viewer-1.4.1-DIAG-src/src/rx_hackrf_pro.h	2026-09-08 15:32:12.054012319 +0000
+@@ -144,6 +144,10 @@
+     qint64 m_dspNanoseconds=0;
+     int m_settleSamples=0;
+     QFile *m_replayFile=nullptr;
++    QFile m_stageProfileFile;
++    QString m_stageProfilePath;
++    quint64 m_profileStatsNs=0,m_profileIqNs=0,m_profileCoarseNs=0,m_profileDemodNs=0,m_profileSpectrumNs=0;
++    quint64 m_profileBlocks=0;
+     struct Capture {QString path;QByteArray bytes;int used=0;};
+     std::shared_ptr<Capture> m_capture;QMutex m_captureMutex;
+     double m_coarsePhase=0,m_coarseHz=0;

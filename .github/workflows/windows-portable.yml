@@ -1,0 +1,101 @@
+name: Build Windows Portable
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install MinGW-w64 and Qt 5
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-make
+            mingw-w64-x86_64-qt5-base
+            mingw-w64-x86_64-binutils
+
+      - name: Build release
+        run: |
+          set -euxo pipefail
+          /mingw64/bin/qmake.exe HackRFT2Viewer.pro CONFIG+=release
+          /mingw64/bin/mingw32-make.exe -j2
+          EXE=""
+          for p in release/HackRFT2Viewer.exe HackRFT2Viewer.exe; do
+            if [[ -f "$p" ]]; then EXE="$p"; break; fi
+          done
+          test -n "$EXE"
+          mkdir -p build-portable/HackRFT2Viewer-Portable-1.4.1-DIAG
+          cp "$EXE" build-portable/HackRFT2Viewer-Portable-1.4.1-DIAG/HackRFT2Viewer.exe
+
+      - name: Deploy Qt runtime
+        run: |
+          set -euxo pipefail
+          DIST=build-portable/HackRFT2Viewer-Portable-1.4.1-DIAG
+          /mingw64/bin/windeployqt.exe --release --no-translations "$DIST/HackRFT2Viewer.exe"
+          cp src/fftw3/libfftw3f-3.dll "$DIST/"
+          cp src/third_party/libusb/libusb-1.0.dll "$DIST/"
+          cp qt.conf "$DIST/"
+          # Make sure MinGW runtime DLLs are beside the EXE even if windeployqt changes behavior.
+          cp /mingw64/bin/libgcc_s_seh-1.dll "$DIST/" || true
+          cp /mingw64/bin/libstdc++-6.dll "$DIST/" || true
+          cp /mingw64/bin/libwinpthread-1.dll "$DIST/" || true
+
+      - name: Add docs and licenses
+        run: |
+          set -euxo pipefail
+          DIST=build-portable/HackRFT2Viewer-Portable-1.4.1-DIAG
+          for f in README-RU.md VALIDATION.md CHANGELOG.md DIAGNOSTIC-RUN-RU.txt THIRD-PARTY-NOTICES.md HACKRF-LICENSE.txt COPYING-GPL-3.0.txt; do
+            [[ -f "$f" ]] && cp "$f" "$DIST/"
+          done
+          cp -r licenses "$DIST/licenses"
+
+      - name: Download official VLC 3.0.23 x64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://get.videolan.org/vlc/3.0.23/win64/vlc-3.0.23-win64.zip'
+          $zip = Join-Path $env:RUNNER_TEMP 'vlc-3.0.23-win64.zip'
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          $expected = '992d19dbd0b8a7cde9167d2f7780b1ef6f92acc8a71acfa736101a21f35181e1'
+          $actual = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "VLC SHA256 mismatch: $actual" }
+          $tmp = Join-Path $env:RUNNER_TEMP 'vlc-extract'
+          Expand-Archive -Path $zip -DestinationPath $tmp -Force
+          $src = Join-Path $tmp 'vlc-3.0.23'
+          $dst = Join-Path $PWD 'build-portable/HackRFT2Viewer-Portable-1.4.1-DIAG/vlc'
+          Copy-Item -Recurse -Force $src $dst
+
+      - name: Package and checksum
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = Join-Path $PWD 'build-portable'
+          $dir = Join-Path $base 'HackRFT2Viewer-Portable-1.4.1-DIAG'
+          $zip = Join-Path $base 'HackRFT2Viewer-Portable-1.4.1-DIAG.zip'
+          Compress-Archive -Path $dir -DestinationPath $zip -CompressionLevel Optimal -Force
+          $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          "$hash  HackRFT2Viewer-Portable-1.4.1-DIAG.zip" | Set-Content -Encoding ascii (Join-Path $base 'SHA256-1.4.1-DIAG.txt')
+          Get-Item $zip | Format-List FullName,Length
+          Get-Content (Join-Path $base 'SHA256-1.4.1-DIAG.txt')
+
+      - name: Upload portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HackRFT2Viewer-Portable-1.4.1-DIAG
+          path: |
+            build-portable/HackRFT2Viewer-Portable-1.4.1-DIAG.zip
+            build-portable/SHA256-1.4.1-DIAG.txt
+          if-no-files-found: error

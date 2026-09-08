@@ -1,0 +1,492 @@
+--- /dev/null
++++ b/src/DSP/bandlimited_resampler.h
+@@ -0,0 +1,221 @@
++#ifndef BANDLIMITED_RESAMPLER_H
++#define BANDLIMITED_RESAMPLER_H
++
++#include <algorithm>
++#include <cmath>
++#include <complex>
++#include <cstddef>
++#include <cstdint>
++#include <immintrin.h>
++#include <vector>
++
++/*
++ * Streaming band-limited fractional resampler for the DVB-T2 front-end.
++ *
++ * The original receiver converted every input sample with a cubic Farrow
++ * interpolator to about 18.285714 MS/s and then ran a 64-tap FIR/2
++ * decimator.  That makes the expensive FIR run at a fixed rate even when
++ * HackRF input is reduced from 10 to 8 MS/s.
++ *
++ * This class performs the conversion directly to the DVB-T2 elementary
++ * sample rate.  A bank of fractional-delay FIR phases is precomputed once;
++ * each output sample needs one 32-tap real-coefficient complex dot product.
++ * The step can be adjusted continuously by the existing timing loop.
++ *
++ * It intentionally owns a small amount of history/look-ahead so callers can
++ * feed arbitrary USB-sized blocks without copying overlap themselves.
++ */
++class bandlimited_resampler
++{
++public:
++    using complex_type = std::complex<float>;
++
++    static constexpr int Taps = 32;
++    static constexpr int Phases = 512;
++    static constexpr int Left = Taps / 2 - 1;   // samples before floor(t)
++    static constexpr int Right = Taps - Left - 1;
++
++    bandlimited_resampler(double inputRateHz, double outputRateHz)
++        : m_inputRateHz(inputRateHz), m_outputRateHz(outputRateHz)
++    {
++        buildTable();
++        reset();
++    }
++
++    void reset()
++    {
++        m_storage.clear();
++        m_storage.reserve(1u << 17);
++        // Give the first output samples causal zero history.  The right side
++        // is provided naturally by look-ahead from the incoming stream.
++        m_storage.assign(Left + 2, complex_type{});
++        m_storageStart = -static_cast<std::int64_t>(Left + 2);
++        m_begin = 0;
++        m_totalInput = 0;
++        m_nextTime = 0.0;
++    }
++
++    double nominalInputStep() const noexcept
++    {
++        return m_inputRateHz / m_outputRateHz;
++    }
++
++    /*
++     * inputStep is measured in input samples per output sample.  It is the
++     * direct equivalent of 2*(legacy Farrow step), therefore the caller can
++     * preserve its existing timing-loop correction exactly.
++     *
++     * Returns the number of output samples written.  outputCapacity is a hard
++     * guard: if it is reached, ungenerated samples remain pending and are
++     * emitted on a later call.
++     */
++    int execute(const int lenIn, const complex_type *input,
++                double inputStep, complex_type *output, int outputCapacity)
++    {
++        if (lenIn <= 0 || input == nullptr || output == nullptr || outputCapacity <= 0)
++            return 0;
++
++        if (!std::isfinite(inputStep) || inputStep < 0.25 || inputStep > 8.0)
++            inputStep = nominalInputStep();
++
++        compactIfNeeded(static_cast<std::size_t>(lenIn));
++        m_storage.insert(m_storage.end(), input, input + lenIn);
++        m_totalInput += lenIn;
++
++        int produced = 0;
++        const std::int64_t lastAvailable = m_totalInput - 1;
++
++        while (produced < outputCapacity) {
++            const std::int64_t center = static_cast<std::int64_t>(m_nextTime);
++            const std::int64_t lastNeeded = center + Right;
++            if (lastNeeded > lastAvailable)
++                break;
++
++            double frac = m_nextTime - static_cast<double>(center);
++            int phase = static_cast<int>(frac * Phases);
++            if (phase < 0) phase = 0;
++            if (phase >= Phases) phase = Phases - 1;
++
++            const std::int64_t firstNeeded = center - Left;
++            const std::int64_t relative = firstNeeded - m_storageStart;
++            if (relative < 0)
++                break; // should only be possible after corrupt state
++
++            const std::size_t pos = m_begin + static_cast<std::size_t>(relative);
++            if (pos + Taps > m_storage.size())
++                break;
++
++            output[produced++] = dot32(m_storage.data() + pos, phase);
++            m_nextTime += inputStep;
++        }
++
++        discardOldHistory();
++        return produced;
++    }
++
++private:
++    double m_inputRateHz = 0.0;
++    double m_outputRateHz = 0.0;
++
++    // Coefficients are duplicated as h,h for real/imag so the complex dot
++    // product maps to straight AVX multiplications over interleaved floats.
++    alignas(32) float m_coeff[Phases][Taps * 2]{};
++
++    std::vector<complex_type> m_storage;
++    std::size_t m_begin = 0;
++    std::int64_t m_storageStart = 0;
++    std::int64_t m_totalInput = 0;
++    double m_nextTime = 0.0;
++
++    static double sinc(double x) noexcept
++    {
++        if (std::abs(x) < 1.0e-12)
++            return 1.0;
++        const double p = 3.141592653589793238462643383279502884 * x;
++        return std::sin(p) / p;
++    }
++
++    void buildTable()
++    {
++        // DVB-T2 8 MHz occupies a little less than +/-4 MHz.  Keep the full
++        // useful channel while leaving a small transition band.  For higher
++        // HackRF rates this also provides the anti-alias filtering needed by
++        // the direct down-conversion to 64/7 MS/s.
++        constexpr double wantedCutoffHz = 4.15e6;
++        const double inputNyquist = 0.5 * m_inputRateHz;
++        const double outputNyquist = 0.5 * m_outputRateHz;
++        const double cutoffHz = std::min({wantedCutoffHz,
++                                          inputNyquist * 0.985,
++                                          outputNyquist * 0.94});
++        const double cutoff = std::clamp(cutoffHz / inputNyquist, 0.05, 0.985);
++        constexpr double pi = 3.141592653589793238462643383279502884;
++
++        for (int p = 0; p < Phases; ++p) {
++            const double frac = static_cast<double>(p) / Phases;
++            double sum = 0.0;
++            double raw[Taps]{};
++
++            for (int j = 0; j < Taps; ++j) {
++                const double d = static_cast<double>(j - Left) - frac;
++                // Blackman window centred on the fractional-delay kernel.
++                const double u = static_cast<double>(j) / (Taps - 1);
++                const double window = 0.42 - 0.5 * std::cos(2.0 * pi * u)
++                                           + 0.08 * std::cos(4.0 * pi * u);
++                raw[j] = cutoff * sinc(cutoff * d) * window;
++                sum += raw[j];
++            }
++
++            if (std::abs(sum) < 1.0e-15)
++                sum = 1.0;
++            for (int j = 0; j < Taps; ++j) {
++                const float h = static_cast<float>(raw[j] / sum);
++                m_coeff[p][j * 2] = h;
++                m_coeff[p][j * 2 + 1] = h;
++            }
++        }
++    }
++
++    complex_type dot32(const complex_type *samples, int phase) const noexcept
++    {
++        const float *x = reinterpret_cast<const float *>(samples);
++        const float *h = m_coeff[phase];
++        __m256 acc = _mm256_setzero_ps();
++        // Taps*2 = 64 floats, eight AVX vectors.
++        for (int i = 0; i < Taps * 2; i += 8) {
++            const __m256 xv = _mm256_loadu_ps(x + i);
++            const __m256 hv = _mm256_loadu_ps(h + i);
++            acc = _mm256_add_ps(acc, _mm256_mul_ps(xv, hv));
++        }
++        alignas(32) float s[8];
++        _mm256_store_ps(s, acc);
++        return complex_type(s[0] + s[2] + s[4] + s[6],
++                            s[1] + s[3] + s[5] + s[7]);
++    }
++
++    void discardOldHistory()
++    {
++        const std::int64_t nextCenter = static_cast<std::int64_t>(m_nextTime);
++        const std::int64_t keepFrom = nextCenter - Left - 4;
++        if (keepFrom <= m_storageStart)
++            return;
++
++        const std::int64_t drop = keepFrom - m_storageStart;
++        const std::size_t available = m_storage.size() - m_begin;
++        const std::size_t amount = std::min<std::size_t>(static_cast<std::size_t>(drop), available);
++        m_begin += amount;
++        m_storageStart += static_cast<std::int64_t>(amount);
++    }
++
++    void compactIfNeeded(std::size_t incoming)
++    {
++        if (m_begin == 0)
++            return;
++        if (m_begin < (1u << 15) && m_storage.size() + incoming < m_storage.capacity())
++            return;
++
++        m_storage.erase(m_storage.begin(), m_storage.begin() + static_cast<std::ptrdiff_t>(m_begin));
++        m_begin = 0;
++    }
++};
++
++#endif // BANDLIMITED_RESAMPLER_H
+--- a/src/DVB_T2/dvbt2_demodulator.cpp
++++ b/src/DVB_T2/dvbt2_demodulator.cpp
+@@ -33,11 +33,16 @@
+     unsigned int max_len_symbol = FFT_32K + FFT_32K / 4 + P1_LEN;
+     resample =  sample_rate / (SAMPLE_RATE * upsample);
+     max_sample_rate_deviation = resample * 1.0e-4;// for 100ppm
+-    uint len_max = (max_len_symbol + P1_LEN) * (resample + max_sample_rate_deviation) * upsample;
++    // Maximum INPUT chunk and maximum OUTPUT chunk are different when the
++    // HackRF runs at 8 MS/s.  1.3.0 incorrectly sized the post-resampler
++    // buffer from the input count; at 8 MS/s that buffer was about 12.5% too
++    // small and could be overwritten.
++    const uint len_max = static_cast<uint>(std::ceil((max_len_symbol + P1_LEN)
++                                * (resample + max_sample_rate_deviation) * upsample)) + 64u;
++    out_resampled_capacity = static_cast<int>(max_len_symbol + P1_LEN + 512u);
+ 
+-    decimator = new filter_decimator;
+-    out_interpolator = static_cast<complex*>(_mm_malloc(sizeof(complex) * len_max * upsample, 32));
+-    out_decimator = new complex[len_max];
++    direct_resampler = new bandlimited_resampler(sample_rate, SAMPLE_RATE);
++    out_resampled = new complex[out_resampled_capacity];
+     out_derotate_sample = new complex[len_max];
+     buffer_sym = new complex[max_len_symbol];
+     for(uint i = 0; i < max_len_symbol; ++i) {
+@@ -79,11 +84,10 @@
+     delete p2_demodulator;
+     delete data_demodulator;
+     delete fc_demod;
+-    delete fft; delete pilot; delete fq_deinterleaver; delete decimator; delete mutex; delete mutex_out;
++    delete fft; delete pilot; delete fq_deinterleaver; delete direct_resampler; delete mutex; delete mutex_out;
+     delete [] out_derotate_sample;
+-    delete [] out_decimator;
++    delete [] out_resampled;
+     delete [] buffer_sym;
+-    _mm_free (out_interpolator);
+ }
+ //-------------------------------------------------------------------------------------------
+ void dvbt2_demodulator::reset()
+@@ -102,7 +106,6 @@
+     p2_init = false;cpConfidence=0;measuredGuard=0;
+     demodulator_init = false;
+     next_symbol_type = SYMBOL_TYPE_P1;
+-    qDebug() << "dvbt2_demodulator reset";
+ }
+ //-------------------------------------------------------------------------------------------
+ void dvbt2_demodulator::init_dvbt2()
+@@ -137,8 +140,9 @@
+         }
+ 
+         double arbitrary_resample = resample - sample_rate_est_filtered;
++        const double direct_input_step = arbitrary_resample * upsample;
+ 
+-        chunk = static_cast<int>(std::nearbyint(est_chunk * arbitrary_resample * upsample));
++        chunk = static_cast<int>(std::nearbyint(est_chunk * direct_input_step));
+         int remain = len_in - idx_in;
+         if(chunk > remain) chunk = remain;
+ 
+@@ -154,13 +158,15 @@
+         rotate_samples(in,out_derotate_sample,chunk,frequency_nco,-double(frequency_est_filtered),phase_nco);
+         idx_in += chunk;
+         //___timing synchronization___
+-        int len_out_interpolator;
+-        interpolator(chunk, out_derotate_sample, arbitrary_resample,
+-                     len_out_interpolator, out_interpolator);
+-        int len_out_decimator;
+-        decimator->execute(len_out_interpolator, out_interpolator, len_out_decimator, out_decimator);
++        // Convert directly from the HackRF rate to the DVB-T2 elementary
++        // rate.  This replaces the old Farrow -> ~18.285 MS/s -> 64-tap /2
++        // path, whose expensive FIR work stayed almost constant at 8 MS/s.
++        const int len_out_resampled = direct_resampler->execute(
++                    chunk, out_derotate_sample, direct_input_step,
++                    out_resampled, out_resampled_capacity);
+         //___demodulations and get offset synchronization__
+-        symbol_acquisition(len_out_decimator, out_decimator, signal_);
++        if(len_out_resampled > 0)
++            symbol_acquisition(len_out_resampled, out_resampled, signal_);
+         if(signal_->reset) break;
+ 
+     }
+@@ -489,7 +495,7 @@
+ 
+ void dvbt2_demodulator::discontinuity()
+ {
+-    reset();p1_demodulator->restart();interpolator.reset();decimator->reset();
++    reset();p1_demodulator->restart();direct_resampler->reset();
+     idx_buffer_sym=0;est_chunk=0;symbol_size=P1_LEN;symbol_synchronize=false;crc32_l1_pre=false;
+     phase_est_filtered=0;cpConfidence=0;
+ }
+--- a/src/DVB_T2/dvbt2_demodulator.h
++++ b/src/DVB_T2/dvbt2_demodulator.h
+@@ -20,8 +20,7 @@
+ #include <QMutex>
+ #include <QMetaType>
+ 
+-#include "DSP/interpolator_farrow.hh"
+-#include "DSP/filter_decimator.h"
++#include "DSP/bandlimited_resampler.h"
+ #include "DSP/fast_fourier_transform.h"
+ #include "DSP/loop_filters.hh"
+ #include "dvbt2_definition.h"
+@@ -130,15 +129,17 @@
+                                       samplerate_hz> loop_filter_sample_rate_offset;
+ 
+     complex* out_derotate_sample;
+-    constexpr static uint upsample = DECIMATION_STEP;
++    // Keep the legacy factor of two in the timing-loop units.  The new
++    // direct resampler consumes 2*(resample-correction) input samples for
++    // each DVB-T2 elementary-rate output sample.
++    constexpr static uint upsample = 2;
+     float sample_rate;
+     double resample;
+     double max_sample_rate_deviation;
+ 
+-    complex* out_interpolator;
+-    complex* out_decimator;
+-    interpolator_farrow_4pt_3rd<complex, float> interpolator;
+-    filter_decimator* decimator;
++    complex* out_resampled;
++    int out_resampled_capacity = 0;
++    bandlimited_resampler* direct_resampler = nullptr;
+ 
+     dvbt2_parameters dvbt2;
+     bool p2_init = false;
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -20,10 +20,10 @@
+     QApplication app(argc,argv);
+     QCoreApplication::setOrganizationName("HackRFT2Viewer");
+     QCoreApplication::setApplicationName("HackRF T2 Viewer");
+-    QCoreApplication::setApplicationVersion("1.3.0");
++    QCoreApplication::setApplicationVersion("1.4.0");
+     runtimeLog.setFileName(QCoreApplication::applicationDirPath()+"/HackRFT2Viewer.log");
+     runtimeLog.open(QIODevice::WriteOnly|QIODevice::Text);qInstallMessageHandler(logMessage);
+-    qInfo()<<"HackRF T2 Viewer 1.3.0";
++    qInfo()<<"HackRF T2 Viewer 1.4.0";
+     QApplication::setFont(QFont("Segoe UI",10));
+     MainWindow window;window.show();
+     if(app.arguments().contains("--smoke-test"))QTimer::singleShot(1500,&app,&QCoreApplication::quit);
+--- a/src/main_window.cpp
++++ b/src/main_window.cpp
+@@ -82,7 +82,7 @@
+ 
+ void MainWindow::buildUi()
+ {
+-    setWindowTitle(QStringLiteral("HackRF T2 Viewer 1.3"));
++    setWindowTitle(QStringLiteral("HackRF T2 Viewer 1.4"));
+     setMinimumSize(1180, 740);
+     resize(1460, 900);
+ 
+@@ -788,8 +788,8 @@
+ {
+     QString text;
+     QString styleName;
+-    if(m_radioMetrics.droppedLastInterval || m_radioMetrics.backlog>48){
+-        text=QStringLiteral("Потери I/Q: DSP не успевает. Выберите 8 MS/s, закройте тяжёлые программы. Для диагностики запишите 3 с I/Q.");
++    if(m_radioMetrics.droppedLastInterval || m_radioMetrics.backlog>18){
++        text=QStringLiteral("Потери I/Q: DSP не успевает. На 8 MS/s это уже не проблема USB/усиления; закройте тяжёлые программы. Очередь автоматически сбрасывает устаревшие блоки.");
+         styleName=QStringLiteral("adviceBad");
+     } else if(m_radioMetrics.clipPercent > 0.02 || m_radioMetrics.peakDbfs > -0.3) {
+         text = QStringLiteral("Перегрузка АЦП: сначала выключите RF AMP, затем уменьшайте LNA и VGA примерно поровну.");
+@@ -1022,7 +1022,7 @@
+ void MainWindow::updatePipeline()
+ {
+     const auto &r=m_radioMetrics;const auto &t=m_transportMetrics;
+-    QString line=QStringLiteral("DSP %1% · %2 MS/s · очередь %3/64 | P1 %4 · P2 %5 | L1 PRE %6 / POST %7 · ошибок PRE %8\nCP %9 · GI %10 · коррекция %11 Гц | BB %12 / CRC %13 | BCH %14 / исправлено %15 / ошибок %16")
++    QString line=QStringLiteral("DSP %1% · %2 MS/s · очередь %3/24 | P1 %4 · P2 %5 | L1 PRE %6 / POST %7 · ошибок PRE %8\nCP %9 · GI %10 · коррекция %11 Гц | BB %12 / CRC %13 | BCH %14 / исправлено %15 / ошибок %16")
+         .arg(r.dspLoadPercent,0,'f',0).arg(r.dspMegaSamplesPerSecond,0,'f',2).arg(r.backlog).arg(r.p1Matches).arg(r.p2Attempts).arg(r.l1PreMatches).arg(r.l1PostMatches).arg(r.l1PreErrors)
+         .arg(r.cpConfidence,0,'f',2).arg(r.guardSamples).arg(r.coarseCorrectionHz,0,'f',0).arg(t.bbFrames).arg(t.bbHeaderErrors).arg(t.bchFrames).arg(t.bchCorrectedBits).arg(t.bchFailedFrames);
+     m_pipeline->setText(line);
+--- a/src/rx_hackrf_pro.cpp
++++ b/src/rx_hackrf_pro.cpp
+@@ -321,8 +321,15 @@
+     {
+         QMutexLocker lock(&m_queueMutex);
+         if(m_pendingBlocks.load()>=MaxQueuedBlocks){
+-            m_queueDrops.fetch_add(1);
+-            return;
++            // Do not spend the next second decoding stale I/Q.  1.3.0
++            // dropped every NEW USB block while retaining the old backlog;
++            // that produced a sequence gap/reset storm and made recovery
++            // practically impossible.  Keep the newest block and shed the
++            // queued stale backlog in one discontinuity instead.
++            const quint64 stale=static_cast<quint64>(m_blockQueue.size());
++            m_queueDrops.fetch_add(stale);
++            m_blockQueue.clear();
++            m_pendingBlocks.store(0);
+         }
+         m_blockQueue.push_back(QueuedBlock{sequence,copy});
+         m_pendingBlocks.fetch_add(1);
+@@ -345,6 +352,10 @@
+             }
+             block=std::move(m_blockQueue.front());
+             m_blockQueue.pop_front();
++            // pendingBlocks counts QUEUED blocks only.  The block currently
++            // being decoded is no longer part of the backlog, which lets the
++            // USB producer safely shed stale queued data on overload.
++            m_pendingBlocks.fetch_sub(1);
+         }
+         if(m_running.load()){
+             if(m_haveSequence && block.sequence!=m_lastSequence+1){
+@@ -353,7 +364,6 @@
+             m_lastSequence=block.sequence;m_haveSequence=true;
+             processBlock(block.bytes);
+         }
+-        m_pendingBlocks.fetch_sub(1);
+     }
+ }
+ void RxHackRfPro::clearBlockQueue()
+--- a/src/rx_hackrf_pro.h
++++ b/src/rx_hackrf_pro.h
+@@ -130,7 +130,7 @@
+     signal_estimate *m_signal = nullptr;
+ 
+     static constexpr int DeviceBlockBytes=262144;
+-    static constexpr int MaxQueuedBlocks=64;
++    static constexpr int MaxQueuedBlocks=24;
+     struct QueuedBlock {
+         quint64 sequence = 0;
+         QByteArray bytes;
+--- /dev/null
++++ b/tests/direct_resampler_benchmark.cpp
+@@ -0,0 +1,47 @@
++#include "DSP/bandlimited_resampler.h"
++#include <chrono>
++#include <cmath>
++#include <complex>
++#include <cstdio>
++#include <vector>
++
++int main(){
++    constexpr double inRate=8.0e6;
++    constexpr double outRate=64.0e6/7.0;
++    constexpr double tone=1.0e6;
++    constexpr int block=131072;
++    constexpr int blocks=32; // 4.19M input samples
++    bandlimited_resampler r(inRate,outRate);
++    std::vector<std::complex<float>> in(block);
++    std::vector<std::complex<float>> out(160000);
++    double phase=0.0;
++    const double d=2.0*M_PI*tone/inRate;
++    std::uint64_t produced=0;
++    double amp=0.0;
++    std::complex<double> phaseStep(0,0);
++    std::complex<float> prev{}; bool havePrev=false;
++    auto t0=std::chrono::steady_clock::now();
++    for(int b=0;b<blocks;++b){
++        for(int i=0;i<block;++i){in[i]={float(std::cos(phase)),float(std::sin(phase))};phase+=d;if(phase>2*M_PI)phase-=2*M_PI;}
++        int n=r.execute(block,in.data(),inRate/outRate,out.data(),int(out.size()));
++        produced+=n;
++        for(int i=0;i<n;++i){
++            amp+=std::abs(out[i]);
++            if(havePrev)phaseStep += std::complex<double>(std::conj(prev)*out[i]);
++            prev=out[i];havePrev=true;
++        }
++    }
++    auto t1=std::chrono::steady_clock::now();
++    double sec=std::chrono::duration<double>(t1-t0).count();
++    double input=double(block)*blocks;
++    double expected=input*outRate/inRate;
++    double meanAmp=produced?amp/produced:0;
++    double measuredHz=std::arg(phaseStep)*outRate/(2*M_PI);
++    std::printf("input %.3f M, output %.3f M, expected %.3f M\n",input/1e6,produced/1e6,expected/1e6);
++    std::printf("mean amplitude %.6f, measured tone %.1f Hz\n",meanAmp,measuredHz);
++    std::printf("elapsed %.3f s, %.2f MS/s input, %.2f MS/s output\n",sec,input/sec/1e6,produced/sec/1e6);
++    if(std::abs(double(produced)-expected)>128.0)return 2;
++    if(std::abs(meanAmp-1.0)>0.02)return 3;
++    if(std::abs(measuredHz-tone)>200.0)return 4;
++    return 0;
++}

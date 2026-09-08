@@ -1,0 +1,130 @@
+{
+  "HackRFT2Viewer.exe": [
+    "Qt5Core.dll",
+    "Qt5Gui.dll",
+    "Qt5Network.dll",
+    "Qt5PrintSupport.dll",
+    "Qt5Widgets.dll",
+    "libfftw3f-3.dll",
+    "libusb-1.0.dll",
+    "KERNEL32.dll",
+    "msvcrt.dll",
+    "libwinpthread-1.dll",
+    "libgcc_s_seh-1.dll",
+    "libstdc++-6.dll"
+  ],
+  "Qt5Widgets.dll": [
+    "dwmapi.dll",
+    "libgcc_s_seh-1.dll",
+    "GDI32.dll",
+    "KERNEL32.dll",
+    "msvcrt.dll",
+    "ole32.dll",
+    "SHELL32.dll",
+    "USER32.dll",
+    "UxTheme.dll",
+    "libstdc++-6.dll",
+    "Qt5Core.dll",
+    "Qt5Gui.dll"
+  ],
+  "Qt5Gui.dll": [
+    "d3d11.dll",
+    "dxgi.dll",
+    "libgcc_s_seh-1.dll",
+    "GDI32.dll",
+    "KERNEL32.dll",
+    "msvcrt.dll",
+    "ole32.dll",
+    "libwinpthread-1.dll",
+    "USER32.dll",
+    "libstdc++-6.dll",
+    "Qt5Core.dll"
+  ],
+  "Qt5Core.dll": [
+    "ADVAPI32.dll",
+    "libgcc_s_seh-1.dll",
+    "KERNEL32.dll",
+    "MPR.dll",
+    "msvcrt.dll",
+    "NETAPI32.dll",
+    "ole32.dll",
+    "libwinpthread-1.dll",
+    "SHELL32.dll",
+    "USER32.dll",
+    "USERENV.dll",
+    "VERSION.dll",
+    "WINMM.dll",
+    "WS2_32.dll",
+    "libstdc++-6.dll"
+  ],
+  "libgcc_s_seh-1.dll": [
+    "KERNEL32.dll",
+    "msvcrt.dll",
+    "libwinpthread-1.dll"
+  ],
+  "libwinpthread-1.dll": [
+    "KERNEL32.dll",
+    "msvcrt.dll"
+  ],
+  "Qt5PrintSupport.dll": [
+    "comdlg32.dll",
+    "GDI32.dll",
+    "KERNEL32.dll",
+    "msvcrt.dll",
+    "USER32.dll",
+    "WINSPOOL.DRV",
+    "libstdc++-6.dll",
+    "Qt5Core.dll",
+    "Qt5Gui.dll",
+    "Qt5Widgets.dll"
+  ],
+  "libusb-1.0.dll": [
+    "KERNEL32.dll",
+    "msvcrt.dll",
+    "USER32.dll"
+  ],
+  "libfftw3f-3.dll": [
+    "KERNEL32.dll",
+    "msvcrt.dll"
+  ],
+  "Qt5Concurrent.dll": [
+    "libgcc_s_seh-1.dll",
+    "KERNEL32.dll",
+    "msvcrt.dll",
+    "libstdc++-6.dll",
+    "Qt5Core.dll"
+  ],
+  "libstdc++-6.dll": [
+    "libgcc_s_seh-1.dll",
+    "KERNEL32.dll",
+    "msvcrt.dll",
+    "libwinpthread-1.dll"
+  ],
+  "Qt5Network.dll": [
+    "ADVAPI32.dll",
+    "CRYPT32.dll",
+    "DNSAPI.dll",
+    "IPHLPAPI.DLL",
+    "KERNEL32.dll",
+    "msvcrt.dll",
+    "WS2_32.dll",
+    "libstdc++-6.dll",
+    "Qt5Core.dll"
+  ],
+  "plugins/platforms/qwindows.dll": [
+    "dwmapi.dll",
+    "GDI32.dll",
+    "IMM32.dll",
+    "KERNEL32.dll",
+    "msvcrt.dll",
+    "ole32.dll",
+    "OLEAUT32.dll",
+    "SHELL32.dll",
+    "USER32.dll",
+    "WINMM.dll",
+    "WTSAPI32.dll",
+    "libstdc++-6.dll",
+    "Qt5Core.dll",
+    "Qt5Gui.dll"
+  ]
+}

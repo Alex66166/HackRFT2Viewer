@@ -1,0 +1,22 @@
+# Regression summary for 1.4.0
+P1 amplitude 0.5 PASS
+P1 amplitude 0.1 PASS
+P1 amplitude 0.02 PASS
+P1 amplitude 0.005 PASS
+Owned I/Q queue P1 at 1e+07 PASS
+Owned I/Q queue P1 at 1.25e+07 PASS
+Owned I/Q queue P1 at 1.6e+07 PASS
+Owned I/Q queue P1 at 2e+07 PASS
+Single PLP ID17 slice and non-rotated I/Q pairing PASS
+All constellations, short/normal FEC, 32+1 lanes PLP index1 PASS
+LDPC single lane through BCH PASS
+receiver_regression_test PASS
+BCH all 12 FEC/rate combinations, 0..capacity errors PASS
+BBFRAME split packets, PLP ID17, normal true file/PSI PASS; UDP PASS
+BBFRAME split packets, PLP ID17, normal false file/PSI PASS; UDP PASS
+transport_output_test PASS
+GUI start / I/Q playback / retune / stop x3 PASS
+Direct resampler standalone benchmark (Linux x86_64, -O2 -mavx2): PASS
+  input 4.194 M samples, output 4.793 M, expected 4.793 M
+  mean amplitude 1.000001, measured tone 1000000.0 Hz
+  elapsed 0.403 s, 10.40 MS/s input incl. test-tone generation

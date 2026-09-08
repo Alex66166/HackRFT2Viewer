@@ -1,0 +1,30 @@
+HackRF T2 Viewer 1.4.1-DIAG — внутренний профилировщик DSP
+
+Эта сборка нужна только для поиска причины DSP 100%/очереди/drops.
+Она автоматически создаёт рядом с HackRFT2Viewer.exe файл:
+
+  HackRFT2_stage_profile_YYYYMMDD_HHMMSS.csv
+
+Что делать:
+1. Запустить HackRFT2Viewer.exe.
+2. Выбрать проблемную частоту и тот же sample rate, на котором возникает перегрузка.
+3. Нажать «Начать приём» и оставить программу работать 30–60 секунд, не менять частоту/усиление.
+4. Остановить приём и закрыть программу.
+5. Прислать созданный HackRFT2_stage_profile_*.csv.
+
+CSV показывает время по участкам:
+- frontend_stats — расчёт RMS/peak/clipping;
+- iq_correct — коррекция I/Q;
+- coarse_rotate — цифровой сдвиг частоты до демодулятора;
+- demod_input_rotate — внутренняя частотная/фазовая коррекция;
+- resampler — перевод к DVB-T2 elementary sample rate;
+- p1 — поиск/декодирование P1;
+- guard — определение защитного интервала;
+- fft — OFDM FFT;
+- p2 — P2/L1;
+- data_demod / fc_demod — OFDM data/FC;
+- downstream_data_wait — время, которое верхний DSP поток ждёт синхронную цепочку
+  time deinterleaver -> QAM -> LDPC -> BCH -> BBFRAME;
+- downstream_control_wait — синхронные операции L1/deinterleaver.
+
+Важно: это диагностическая сборка. Небольшая нагрузка от таймеров и записи одной CSV-строки примерно раз в 0.5 с ожидаема.
