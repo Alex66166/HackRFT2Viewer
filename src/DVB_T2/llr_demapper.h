@@ -19,6 +19,9 @@
 #include <QThread>
 #include <QMutex>
 #include <complex>
+#include <cstdint>
+#include <unordered_map>
+#include <vector>
 
 #include "dvbt2_definition.h"
 #include "ldpc_decoder.h"
@@ -45,6 +48,16 @@ public slots:
     void stop();
 
 private:
+    struct ldpc_batch {
+        int fec = 0;
+        int modulation = -1;
+        int codeRate = -1;
+        int fecType = -1;
+        int blocks = 0;
+        std::vector<int8_t> soft;
+        std::vector<int> ids;
+    };
+
     QThread* thread;
     QMutex* mutex_in;
     l1_postsignalling l1_post;
@@ -56,6 +69,7 @@ private:
     complex derotate_qam16;
     complex derotate_qam64;
     complex derotate_qam256;
+    std::unordered_map<int, ldpc_batch> m_ldpcBatches;
 
     const int tc_qam16_short[8] = { 0, 0, 0, 1, 7, 20, 20, 21 };
     const int tc_qam16_normal[8] = { 0, 0, 2, 4, 4, 5, 7, 7 };
