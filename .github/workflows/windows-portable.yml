@@ -88,15 +88,26 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $url = 'https://get.videolan.org/vlc/3.0.23/win64/vlc-3.0.23-win64.zip'
+          # downloads.videolan.org serves the actual file directly. get.videolan.org may
+          # return the HTML mirror-selection page to non-browser clients such as IWR.
+          $url = 'https://downloads.videolan.org/videolan/vlc/3.0.23/win64/vlc-3.0.23-win64.zip'
           $zip = Join-Path $env:RUNNER_TEMP 'vlc-3.0.23-win64.zip'
           Invoke-WebRequest -Uri $url -OutFile $zip
+
+          $file = Get-Item $zip
+          if ($file.Length -lt 70000000) {
+              throw "VLC download is unexpectedly small ($($file.Length) bytes); expected the ~80 MB ZIP"
+          }
+
           $expected = '992d19dbd0b8a7cde9167d2f7780b1ef6f92acc8a71acfa736101a21f35181e1'
           $actual = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
           if ($actual -ne $expected) { throw "VLC SHA256 mismatch: $actual" }
+
           $tmp = Join-Path $env:RUNNER_TEMP 'vlc-extract'
           Expand-Archive -Path $zip -DestinationPath $tmp -Force
           $src = Join-Path $tmp 'vlc-3.0.23'
+          if (-not (Test-Path $src)) { throw "VLC directory not found after extraction: $src" }
+
           $dst = Join-Path $PWD 'build-portable/HackRFT2Viewer-Portable-1.4.1-DIAG/vlc'
           Copy-Item -Recurse -Force $src $dst
 
