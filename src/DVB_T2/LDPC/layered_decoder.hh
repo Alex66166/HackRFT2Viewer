@@ -26,27 +26,6 @@
 #include <new>
 #include "ldpc.hh"
 
-//#if __cplusplus >= 201703L && defined _MSVC_LANG
-//#include <malloc.h>
-
-//#undef  free
-//#define free  aligned_free
-
-//extern "C"
-//{
-//static inline __attribute__((__always_inline__))
-//void *aligned_alloc(size_t align, size_t wanted){return _aligned_malloc( wanted, align);}
-
-//static inline __attribute__((__always_inline__))
-//void aligned_free(void *ptr){return _aligned_free( ptr );}
-//}
-
-//namespace std
-//{ using ::aligned_alloc;
-//  using ::aligned_free;
-//}
-//#endif  // C++17 && __MINGW32__
-
 template <typename TYPE, typename ALG>
 class LDPCDecoder
 {
@@ -62,6 +41,7 @@ class LDPCDecoder
     for (int i = 0; i < LT; ++i)
       bnl[i] = alg.zero();
   }
+
   bool bad(TYPE *data, TYPE *parity, int blocks)
   {
     for (int i = 0; i < q; ++i) {
@@ -80,6 +60,37 @@ class LDPCDecoder
     }
     return false;
   }
+
+  // The SIMD decoder traditionally returns one convergence result for the
+  // whole vector.  A single bad lane therefore made the caller send all 32
+  // lanes to the very expensive serial BCH decoder.  Record the final parity
+  // status per lane so callers can discard only LDPC-invalid FEC frames.
+  void lane_validity(TYPE *data, TYPE *parity, int blocks, bool *valid)
+  {
+    if (!valid)
+      return;
+    for (int lane = 0; lane < blocks; ++lane)
+      valid[lane] = true;
+
+    for (int i = 0; i < q; ++i) {
+      int cnt = cnc[i];
+      for (int j = 0; j < M; ++j) {
+        TYPE cnv = alg.sign(alg.one(), parity[M*i+j]);
+        if (i)
+          cnv = alg.sign(cnv, parity[M*(i-1)+j]);
+        else if (j)
+          cnv = alg.sign(cnv, parity[j+(q-1)*M-1]);
+        for (int c = 0; c < cnt; ++c)
+          cnv = alg.sign(cnv, data[pos[CNL*(M*i+j)+c]]);
+
+        const auto mask = vcgtz(cnv);
+        for (int lane = 0; lane < blocks; ++lane)
+          if (!mask.v[lane])
+            valid[lane] = false;
+      }
+    }
+  }
+
   void update(TYPE *data, TYPE *parity)
   {
     TYPE *bl = bnl;
@@ -108,10 +119,12 @@ class LDPCDecoder
       }
     }
   }
+
 public:
   LDPCDecoder() : initialized(false)
   {
   }
+
   void init(LDPCInterface *it)
   {
     if (initialized) {
@@ -128,9 +141,6 @@ public:
     R = N - K;
     q = R / M;
     CNL = ldpc->links_max_cn() - 2;
-
-//    pos = new uint16_t[R * CNL];
-//    cnc = new uint8_t[R];
 
     pos = new uint16_t[R * CNL];
     cnc = new uint8_t[R];
@@ -149,35 +159,39 @@ public:
     }
     LT = ldpc->links_total();
     delete ldpc;
-//    bnl = reinterpret_cast<TYPE *>(aligned_alloc(sizeof(TYPE), sizeof(TYPE) * LT));
-//    pty = reinterpret_cast<TYPE *>(aligned_alloc(sizeof(TYPE), sizeof(TYPE) * R));
 
     bnl = new TYPE[LT];
     pty = new TYPE[R];
-
 
     uint16_t *tmp = new uint16_t[R * CNL];
     for (int i = 0; i < q; ++i)
       for (int j = 0; j < M; ++j)
         for (int c = 0; c < CNL; ++c)
           tmp[CNL*(M*i+j)+c] = pos[CNL*(q*j+i)+c];
-    // delete[] pos;
     delete[] pos;
     pos = tmp;
   }
-  int operator()(TYPE *data, TYPE *parity, int trials = 25, int blocks = 1)
+
+  int operator()(TYPE *data, TYPE *parity, int trials = 25, int blocks = 1,
+                 bool *lane_valid = nullptr)
   {
     reset();
     for (int i = 0; i < q; ++i)
       for (int j = 0; j < M; ++j)
         pty[M*i+j] = parity[q*j+i];
+
     while (bad(data, pty, blocks) && --trials >= 0)
       update(data, pty);
+
+    // Do this while parity is still in the decoder's row-major layout.
+    lane_validity(data, pty, blocks, lane_valid);
+
     for (int i = 0; i < q; ++i)
       for (int j = 0; j < M; ++j)
         parity[q*j+i] = pty[M*i+j];
     return trials;
   }
+
   ~LDPCDecoder()
   {
     if (initialized) {
