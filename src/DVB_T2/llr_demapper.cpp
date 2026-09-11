@@ -120,8 +120,10 @@ llr_demapper::llr_demapper(QMutex* _mutex, QObject* parent) :
     thread = new QThread;
     thread->setObjectName("ldpc_decoder");
     decoder->moveToThread(thread);
-    connect(this, &llr_demapper::soft_multiplexer_de_twist,
-            decoder, &ldpc_decoder::execute, Qt::BlockingQueuedConnection);
+    flushTimer = new QTimer(this);
+    flushTimer->setInterval(200);
+    connect(flushTimer, &QTimer::timeout, this, &llr_demapper::flushPending);
+    flushTimer->start();
     connect(thread, &QThread::finished, decoder, &QObject::deleteLater);
     thread->start(QThread::HighPriority);
     QMetaObject::invokeMethod(decoder, []{}, Qt::BlockingQueuedConnection);
@@ -256,6 +258,7 @@ void llr_demapper::execute(int count, complex *cells, int index, l1_postsignalli
         batch.soft.resize(static_cast<size_t>(fec) * SIZEOF_SIMD);
     if(batch.ids.size() != SIZEOF_SIMD)
         batch.ids.resize(SIZEOF_SIMD, index);
+    batch.post = std::make_shared<owned_l1_post>(post);
     const __m256 vPrecision = _mm256_set1_ps(precision);
     const __m256 vMinimum = _mm256_set1_ps(-127.0f);
     const __m256 vMaximum = _mm256_set1_ps(127.0f);
@@ -408,28 +411,10 @@ void llr_demapper::execute(int count, complex *cells, int index, l1_postsignalli
         }
         batch.ids[batch.blocks] = index;
         ++batch.blocks;
-        if(batch.blocks == SIZEOF_SIMD) {
-            auto soft = std::make_shared<std::vector<int8_t>>();
-            soft->swap(batch.soft);
-            auto ids = std::make_shared<std::vector<int>>(batch.ids);
-            batch.blocks = 0;
-            batch.soft.resize(static_cast<size_t>(fec) * SIZEOF_SIMD);
-            batch.ids.assign(SIZEOF_SIMD, index);
-            auto ownedPost = std::make_shared<owned_l1_post>(post);
-            const auto waitStart = perf_clock::now();
-            auto permit = acquire_async_queue_slot(ldpcQueueSlots());
-            diag.ldpcWaitNs += perfNs(waitStart);
-            ++diag.dispatches;
-            ldpc_decoder *receiver = decoder;
-            QMetaObject::invokeMethod(receiver,
-                [receiver, ids, ownedPost, soft, permit] {
-                    (void)permit;
-                    receiver->execute(ids->data(), ownedPost->value,
-                                      static_cast<int>(soft->size()), soft->data());
-                },
-                Qt::QueuedConnection);
-        }
+        if(batch.blocks == SIZEOF_SIMD)
+            dispatchBatch(batch);
     }
+
     diag.mapNs += perfNs(mapStart);
     diag.totalNs += perfNs(callStart);
     const auto now = perf_clock::now();
@@ -457,8 +442,35 @@ void llr_demapper::execute(int count, complex *cells, int index, l1_postsignalli
         diag = QamDiag{};
     }
 }
+void llr_demapper::dispatchBatch(ldpc_batch &batch)
+{
+    if(batch.blocks == 0 || !batch.post) return;
+    const size_t count = static_cast<size_t>(batch.fec) * batch.blocks;
+    auto soft = std::make_shared<std::vector<int8_t>>(batch.soft.begin(), batch.soft.begin() + count);
+    auto ids = std::make_shared<std::vector<int>>(batch.ids.begin(), batch.ids.begin() + batch.blocks);
+    auto post = batch.post;
+    batch.blocks = 0;
+    const auto waitStart = perf_clock::now();
+    auto permit = acquire_async_queue_slot(ldpcQueueSlots());
+    qamDiag().ldpcWaitNs += perfNs(waitStart);
+    ++qamDiag().dispatches;
+    // Observation only; the owned queued payload is the production connection.
+    emit soft_multiplexer_de_twist(ids->data(), post->value, int(soft->size()), soft->data());
+    ldpc_decoder *receiver = decoder;
+    QMetaObject::invokeMethod(receiver, [receiver, ids, post, soft, permit] {
+        (void)permit;
+        receiver->execute(ids->data(), post->value, int(soft->size()), soft->data());
+    }, Qt::QueuedConnection);
+}
+
+void llr_demapper::flushPending()
+{
+    for(auto &entry : m_ldpcBatches) dispatchBatch(entry.second);
+}
+
 void llr_demapper::stop()
 {
+    flushTimer->stop();
     m_ldpcBatches.clear();
     emit finished();
 }

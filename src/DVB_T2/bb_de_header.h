@@ -87,6 +87,7 @@ public slots:
     void set_recording(bool enabled, QString fileName);
     void reset_transport_state();
     void stop();
+    TransportMetrics snapshotMetrics() const { return metrics; }
 
 private:
     int plp_id = 0;

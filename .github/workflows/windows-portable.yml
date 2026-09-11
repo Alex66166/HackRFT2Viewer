@@ -6,6 +6,19 @@ on:
     branches: [ main, master ]
 
 jobs:
+  native-tests:
+    name: Native receiver regressions (ASan and UBSan)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install native test dependencies
+        run: sudo apt-get update && sudo apt-get install -y g++ ripgrep qtbase5-dev qtbase5-dev-tools libfftw3-dev libusb-1.0-0-dev
+      - name: Run receiver, FEC, transport and GUI tests
+        env:
+          QT_NATIVE: /usr
+          SANITIZE: '1'
+        run: bash build-tests-native.sh
+
   source-archive:
     name: Full source archive
     runs-on: ubuntu-latest
@@ -16,7 +29,7 @@ jobs:
       - name: Upload full source archive
         uses: actions/upload-artifact@v7
         with:
-          name: HackRFT2Viewer-Full-Source-1.4.1-DIAG
+          name: HackRFT2Viewer-Full-Source-1.4.2-RC1
           path: |
             .
             !.git/**
@@ -24,6 +37,7 @@ jobs:
           if-no-files-found: error
 
   build-windows:
+    needs: native-tests
     runs-on: windows-latest
     defaults:
       run:
@@ -52,6 +66,7 @@ jobs:
           set -euxo pipefail
           QMAKE="$(command -v qmake-qt5 || command -v qmake)"
           echo "Using qmake: $QMAKE"
+          printf '#define HACKRFT2_GIT_COMMIT "%s"\n' "$GITHUB_SHA" > src/build_revision.h
           "$QMAKE" HackRFT2Viewer.pro CONFIG+=release
           /mingw64/bin/mingw32-make.exe -j2
           EXE=""
@@ -59,13 +74,13 @@ jobs:
             if [[ -f "$p" ]]; then EXE="$p"; break; fi
           done
           test -n "$EXE"
-          mkdir -p build-portable/HackRFT2Viewer-Portable-1.4.1-DIAG
-          cp "$EXE" build-portable/HackRFT2Viewer-Portable-1.4.1-DIAG/HackRFT2Viewer.exe
+          mkdir -p build-portable/HackRFT2Viewer-Portable-1.4.2-RC1
+          cp "$EXE" build-portable/HackRFT2Viewer-Portable-1.4.2-RC1/HackRFT2Viewer.exe
 
       - name: Deploy Qt runtime
         run: |
           set -euxo pipefail
-          DIST=build-portable/HackRFT2Viewer-Portable-1.4.1-DIAG
+          DIST=build-portable/HackRFT2Viewer-Portable-1.4.2-RC1
           WINDEPLOYQT="$(command -v windeployqt-qt5 || command -v windeployqt)"
           echo "Using windeployqt: $WINDEPLOYQT"
           "$WINDEPLOYQT" --release --no-translations "$DIST/HackRFT2Viewer.exe"
@@ -79,7 +94,7 @@ jobs:
       - name: Collect all MinGW runtime DLL dependencies
         run: |
           set -euxo pipefail
-          DIST=build-portable/HackRFT2Viewer-Portable-1.4.1-DIAG
+          DIST=build-portable/HackRFT2Viewer-Portable-1.4.2-RC1
           MINGW_BIN_WIN="$(cygpath -w /mingw64/bin)"
           NTLDD=/mingw64/bin/ntldd.exe
 
@@ -116,7 +131,7 @@ jobs:
       - name: Add docs and licenses
         run: |
           set -euxo pipefail
-          DIST=build-portable/HackRFT2Viewer-Portable-1.4.1-DIAG
+          DIST=build-portable/HackRFT2Viewer-Portable-1.4.2-RC1
           for f in README-RU.md VALIDATION.md CHANGELOG.md DIAGNOSTIC-RUN-RU.txt THIRD-PARTY-NOTICES.md HACKRF-LICENSE.txt COPYING-GPL-3.0.txt; do
             [[ -f "$f" ]] && cp "$f" "$DIST/"
           done
@@ -146,7 +161,7 @@ jobs:
           $src = Join-Path $tmp 'vlc-3.0.23'
           if (-not (Test-Path $src)) { throw "VLC directory not found after extraction: $src" }
 
-          $dst = Join-Path $PWD 'build-portable/HackRFT2Viewer-Portable-1.4.1-DIAG/vlc'
+          $dst = Join-Path $PWD 'build-portable/HackRFT2Viewer-Portable-1.4.2-RC1/vlc'
           Copy-Item -Recurse -Force $src $dst
 
       - name: Package and checksum
@@ -154,19 +169,19 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $base = Join-Path $PWD 'build-portable'
-          $dir = Join-Path $base 'HackRFT2Viewer-Portable-1.4.1-DIAG'
-          $zip = Join-Path $base 'HackRFT2Viewer-Portable-1.4.1-DIAG.zip'
+          $dir = Join-Path $base 'HackRFT2Viewer-Portable-1.4.2-RC1'
+          $zip = Join-Path $base 'HackRFT2Viewer-Portable-1.4.2-RC1.zip'
           Compress-Archive -Path $dir -DestinationPath $zip -CompressionLevel Optimal -Force
           $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
-          "$hash  HackRFT2Viewer-Portable-1.4.1-DIAG.zip" | Set-Content -Encoding ascii (Join-Path $base 'SHA256-1.4.1-DIAG.txt')
+          "$hash  HackRFT2Viewer-Portable-1.4.2-RC1.zip" | Set-Content -Encoding ascii (Join-Path $base 'SHA256-1.4.2-RC1.txt')
           Get-Item $zip | Format-List FullName,Length
-          Get-Content (Join-Path $base 'SHA256-1.4.1-DIAG.txt')
+          Get-Content (Join-Path $base 'SHA256-1.4.2-RC1.txt')
 
       - name: Upload portable artifact
         uses: actions/upload-artifact@v7
         with:
-          name: HackRFT2Viewer-Portable-1.4.1-DIAG
+          name: HackRFT2Viewer-Portable-1.4.2-RC1
           path: |
-            build-portable/HackRFT2Viewer-Portable-1.4.1-DIAG.zip
-            build-portable/SHA256-1.4.1-DIAG.txt
+            build-portable/HackRFT2Viewer-Portable-1.4.2-RC1.zip
+            build-portable/SHA256-1.4.2-RC1.txt
           if-no-files-found: error

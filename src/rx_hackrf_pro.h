@@ -11,6 +11,7 @@
 #define RX_HACKRF_PRO_H
 
 #include <QObject>
+#include <QJsonObject>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QTimer>
@@ -148,7 +149,7 @@ private:
     QString m_stageProfilePath;
     quint64 m_profileStatsNs=0,m_profileIqNs=0,m_profileCoarseNs=0,m_profileDemodNs=0,m_profileSpectrumNs=0;
     quint64 m_profileBlocks=0;
-    struct Capture {QString path;QByteArray bytes;int used=0;};
+    struct Capture {QString path;QByteArray bytes;QJsonObject metadata;int used=0;};
     std::shared_ptr<Capture> m_capture;QMutex m_captureMutex;
     double m_coarsePhase=0,m_coarseHz=0;
     quint64 m_lastSequence=0,m_lastDropCount=0;bool m_haveSequence=false;

@@ -1,3 +1,7 @@
+#include "diagnostics.h"
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSaveFile>
 /*
  * HackRF T2 Viewer - HackRF Pro receive backend
  * Copyright (C) 2026 OpenAI
@@ -228,14 +232,12 @@ void RxHackRfPro::resetPipeline()
     m_lastSequence=0;m_lastDropCount=m_queueDrops.load();m_haveSequence=false;
     m_profileStatsNs=m_profileIqNs=m_profileCoarseNs=m_profileDemodNs=m_profileSpectrumNs=0;
     m_profileBlocks=0;
-    if(!m_stageProfileFile.isOpen()) {
-        m_stageProfilePath = QCoreApplication::applicationDirPath()
-            + QStringLiteral("/HackRFT2_stage_profile_%1.csv")
-                .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss")));
+    if(!m_stageProfileFile.isOpen() && !Diagnostics::sessionDir().isEmpty()) {
+        m_stageProfilePath = Diagnostics::filePath(QStringLiteral("stage-profile.csv"));
         m_stageProfileFile.setFileName(m_stageProfilePath);
-        if(m_stageProfileFile.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        if(m_stageProfileFile.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Append)) {
             QTextStream out(&m_stageProfileFile);out.setCodec("UTF-8");
-            out << "elapsed_ms,input_samples,blocks,usb_msps,processed_msps,backlog,drops,drops_interval,"
+            if(m_stageProfileFile.size() == 0) out << "elapsed_ms,input_samples,blocks,usb_msps,processed_msps,backlog,drops,drops_interval,"
                    "frontend_stats_ms,iq_correct_ms,coarse_rotate_ms,demod_outer_ms,spectrum_ms,"
                    "demod_input_rotate_ms,resampler_ms,symbol_acquire_ms,p1_ms,guard_ms,fft_ms,p2_ms,"
                    "data_demod_ms,fc_demod_ms,downstream_data_wait_ms,downstream_control_wait_ms,"
@@ -249,6 +251,17 @@ void RxHackRfPro::captureIq(QString path)
 {
     if(!m_running.load())return;
     auto capture=std::make_shared<Capture>();capture->path=path;capture->bytes.resize(int(m_settings.sampleRateHz)*6);
+    capture->metadata = QJsonObject{
+        {QStringLiteral("format"),QStringLiteral("cs8: signed int8 interleaved I,Q")},
+        {QStringLiteral("sample_rate_hz"),m_settings.sampleRateHz},
+        {QStringLiteral("frequency_hz"),double(m_settings.frequencyHz)},
+        {QStringLiteral("bandwidth_hz"),double(m_settings.bandwidthHz)},
+        {QStringLiteral("lna_db"),m_settings.lnaGainDb},
+        {QStringLiteral("vga_db"),m_settings.vgaGainDb},
+        {QStringLiteral("rf_amp"),m_settings.rfAmp},
+        {QStringLiteral("version"),QString::fromLatin1(Diagnostics::version())},
+        {QStringLiteral("requested_utc"),QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)}
+    };
     {QMutexLocker lock(&m_captureMutex);m_capture=capture;}
     emit receiverStage(QStringLiteral("Запись 3 секунд непрерывного USB I/Q до DSP: %1").arg(path));
 }
@@ -341,9 +354,18 @@ void RxHackRfPro::processSamples(const uint8_t *bytes,int count)
         if(m_capture->used==m_capture->bytes.size()){complete=m_capture;m_capture.reset();}
     }}
     if(complete)QMetaObject::invokeMethod(this,[this,complete]{
-        QFile file(complete->path);
+        QSaveFile file(complete->path);
         if(!file.open(QIODevice::WriteOnly) || file.write(complete->bytes)!=complete->bytes.size())emit radioError(QStringLiteral("Ошибка записи I/Q: ")+file.errorString());
-        else {file.close();emit receiverStage(QStringLiteral("Непрерывный I/Q сохранён: %1").arg(complete->path));}
+        else if(!file.commit()) emit radioError(QStringLiteral("Не удалось сохранить I/Q: ")+file.errorString());
+        else {
+            complete->metadata.insert(QStringLiteral("bytes"),complete->used);
+            complete->metadata.insert(QStringLiteral("complete"),true);
+            QSaveFile metadata(complete->path+QStringLiteral(".json"));
+            const auto json=QJsonDocument(complete->metadata).toJson();
+            if(!metadata.open(QIODevice::WriteOnly) || metadata.write(json)!=json.size() || !metadata.commit())
+                emit radioError(QStringLiteral("I/Q сохранён, но запись метаданных не удалась: ")+metadata.errorString());
+            emit receiverStage(QStringLiteral("Непрерывный I/Q сохранён: %1").arg(complete->path));
+        }
     },Qt::QueuedConnection);
     const QByteArray copy(reinterpret_cast<const char*>(bytes),count);
     bool schedule=false;
@@ -447,6 +469,15 @@ void RxHackRfPro::processBlock(const QByteArray &bytes)
     m.droppedLastInterval=m.droppedBuffers-m_lastDropCount;m_lastDropCount=m.droppedBuffers;
     m.p2Attempts=m_demodulator->p2Attempts;m.l1PreErrors=m_demodulator->l1PreErrors;
     m.guardSamples=m_demodulator->measuredGuard;m.cpConfidence=m_demodulator->cpConfidence;m.coarseCorrectionHz=m_coarseHz;
+    if(m_stageProfileFile.isOpen() && m_stageProfileFile.size() > 8 * 1024 * 1024) {
+        QFile previous(m_stageProfilePath);
+        QByteArray header;
+        if(previous.open(QIODevice::ReadOnly)) { header = previous.readLine(); previous.close(); }
+        m_stageProfileFile.close();
+        QFile::remove(m_stageProfilePath + QStringLiteral(".1"));
+        QFile::rename(m_stageProfilePath, m_stageProfilePath + QStringLiteral(".1"));
+        if(m_stageProfileFile.open(QIODevice::WriteOnly | QIODevice::Text)) m_stageProfileFile.write(header);
+    }
     const auto demodProfile=m_demodulator->take_stage_profile();
     emit metricsChanged(m);
     if(count>=2048){

@@ -1,0 +1,14 @@
+/build-native/
+/build-sanitized/
+/build-portable/
+/release/
+/debug/
+/Makefile*
+/.qmake.stash
+/src/build_revision.h
+*.o
+*.d
+*.log
+*.cs8
+*.cf32
+/settings.ini

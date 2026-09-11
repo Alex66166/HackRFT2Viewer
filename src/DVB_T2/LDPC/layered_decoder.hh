@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <new>
+#include <type_traits>
 #include "ldpc.hh"
 
 template <typename TYPE, typename ALG>
@@ -83,10 +84,13 @@ class LDPCDecoder
         for (int c = 0; c < cnt; ++c)
           cnv = alg.sign(cnv, data[pos[CNL*(M*i+j)+c]]);
 
-        const auto mask = vcgtz(cnv);
-        for (int lane = 0; lane < blocks; ++lane)
-          if (!mask.v[lane])
-            valid[lane] = false;
+        if constexpr (std::is_arithmetic<TYPE>::value) {
+          if (!(cnv > 0)) valid[0] = false;
+        } else {
+          const auto mask = vcgtz(cnv);
+          for (int lane = 0; lane < blocks; ++lane)
+            if (!mask.v[lane]) valid[lane] = false;
+        }
       }
     }
   }

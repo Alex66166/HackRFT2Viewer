@@ -38,16 +38,49 @@ public:
 
 private:
     ReedSolomonErrorCorrection<NR, FCR, GF> algorithm;
-    void
-    update_syndromes(uint8_t *poly, ValueType *syndromes, int begin, int end)
-    {
-      for (int j = begin; j < end; ++j) {
-        ValueType coeff(get_be_bit(poly, j));
-        IndexType root(FCR), pe(1);
+    // Eight Horner steps per byte. Tables are immutable and shared by all
+    // decoders of this code, not rebuilt per frame. Binary BCH also has
+    // S(2*i) = S(i)^2, so only odd roots need the byte scan (FCR == 1).
+    struct SyndromeTables {
+      value_type low[NR][256]{}, high[NR][256]{}, byte[NR][256]{};
+      SyndromeTables() {
         for (int i = 0; i < NR; ++i) {
-          syndromes[i] = fma(root, syndromes[i], coeff);
-          root *= pe;
+          if (FCR == 1 && ((i + 1) % 2 == 0)) continue;
+          IndexType step(FCR + i), step8(8 * (FCR + i));
+          for (int b = 0; b < 256; ++b) {
+            low[i][b] = value_type(int(ValueType(b) * step8));
+            if (N > 255 && (b << 8) <= N)
+              high[i][b] = value_type(int(ValueType(b << 8) * step8));
+            ValueType v(0);
+            for (int bit = 7; bit >= 0; --bit)
+              v = fma(step, v, ValueType((b >> bit) & 1));
+            byte[i][b] = value_type(int(v));
+          }
         }
+      }
+    };
+    static const SyndromeTables &syndrome_tables() {
+      static const SyndromeTables tables;
+      return tables;
+    }
+    void update_syndromes(uint8_t *poly, ValueType *syndromes, int begin, int end)
+    {
+      const auto &tables = syndrome_tables();
+      for (int i = 0; i < NR; ++i) {
+        if (FCR == 1 && ((i + 1) % 2 == 0)) continue;
+        int j = begin;
+        ValueType v = syndromes[i];
+        IndexType root(FCR + i);
+        while (j < end && (j & 7))
+          v = fma(root, v, ValueType(get_be_bit(poly, j++)));
+        for (; j + 8 <= end; j += 8) {
+          const unsigned previous = int(v);
+          v = ValueType(tables.low[i][previous & 255] ^
+                        tables.high[i][previous >> 8] ^ tables.byte[i][poly[j >> 3]]);
+        }
+        while (j < end)
+          v = fma(root, v, ValueType(get_be_bit(poly, j++)));
+        syndromes[i] = v;
       }
     }
 
@@ -66,6 +99,12 @@ public:
       }
       update_syndromes(data, syndromes, 1, data_len);
       update_syndromes(parity, syndromes, 0, NP);
+      if (FCR == 1) {
+        for (int root = 2; root <= NR; root += 2) {
+          ValueType half = syndromes[root / 2 - 1];
+          syndromes[root - 1] = half * half;
+        }
+      }
       int nonzero = 0;
       for (int i = 0; i < NR; ++i) {
         nonzero += !!syndromes[i];
@@ -142,6 +181,8 @@ public:
           xor_be_bit(parity, idx - data_len, err);
         }
       }
+      // Never accept a miscorrection as a valid BBFRAME.
+      if (compute_syndromes(data, parity, syndromes, data_len)) return -1;
       int corrections_count = 0;
       for (int i = 0; i < count; ++i) {
         corrections_count += !!magnitudes[i];

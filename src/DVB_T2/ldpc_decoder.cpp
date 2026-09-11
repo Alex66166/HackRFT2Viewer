@@ -138,8 +138,7 @@ ldpc_decoder::ldpc_decoder(QObject *parent) : QObject(parent)
     thread = new QThread;
     thread->setObjectName("bch_decoder");
     decoder->moveToThread(thread);
-    connect(this, &ldpc_decoder::bit_bch,
-            decoder, &bch_decoder::execute, Qt::BlockingQueuedConnection);
+
     connect(thread, &QThread::finished, decoder, &QObject::deleteLater);
     thread->start(QThread::HighPriority);
     QMetaObject::invokeMethod(decoder, []{}, Qt::BlockingQueuedConnection);
@@ -276,7 +275,11 @@ void ldpc_decoder::execute(int* _idx_plp_simd, l1_postsignalling _l1_post,
     for(int j = 0; j < len_in; j += fec_size) {
         for(int i = 0; i < k_ldpc; ++i)
             reinterpret_cast<code_type*>(simd + i)[k] = in[j + i];
-        for(int t = 0; t < q_ldpc; ++t) {
+        // DVB-T2 QPSK (rates 1/2..5/6) has no parity interleaving.
+        if(l1_post.plp[plp_id[0]].plp_mod == MOD_QPSK) {
+            for(int i = k_ldpc; i < fec_size; ++i)
+                reinterpret_cast<code_type*>(simd + i)[k] = in[j + i];
+        } else for(int t = 0; t < q_ldpc; ++t) {
             for(int s = 0; s < 360; ++s) {
                 reinterpret_cast<code_type*>(
                     simd + k_ldpc + q_ldpc * s + t)[k] =
@@ -288,12 +291,13 @@ void ldpc_decoder::execute(int* _idx_plp_simd, l1_postsignalling _l1_post,
     diag.packNs += perfNs(packStart);
 
     const auto coreStart = perf_clock::now();
-    int trials = TRIALS;
+    const int maxTrials = TRIALS;
+    int trials = maxTrials;
     bool laneValid[SIZEOF_SIMD] = {};
     const int remaining = (*p_decode)(simd, simd + k_ldpc, trials, blocks, laneValid);
     diag.coreNs += perfNs(coreStart);
 
-    const int usedIterations = TRIALS - std::max(remaining, 0);
+    const int usedIterations = maxTrials - std::max(remaining, 0);
     diag.iterations += static_cast<quint64>(usedIterations);
     if(remaining < 0)
         ++diag.maxedCalls;
@@ -306,33 +310,29 @@ void ldpc_decoder::execute(int* _idx_plp_simd, l1_postsignalling _l1_post,
     diag.validBlocks += static_cast<quint64>(validCount);
     diag.invalidBlocks += static_cast<quint64>(blocks - validCount);
 
-    // Critical overload fix: the BCH implementation is scalar and expensive,
-    // especially when asked to correct random garbage.  Previously one bad
-    // LDPC lane caused all 32 lanes to be queued to BCH.  During the captured
-    // 64-QAM 4/5 test every SIMD batch exhausted all 25 LDPC iterations, BCH
-    // then saturated its queue, and that back-pressure caused HackRF drops.
-    // Compact only parity-valid LDPC lanes.  Invalid lanes are unusable FEC
-    // frames anyway, so dropping them here cannot remove decodable data.
-    if(validCount > 0) {
+    // BCH is the outer decoder: a failed LDPC syndrome does not mean the
+    // systematic bits are beyond its correction radius. Keep every lane.
+    // Byte-wise BCH syndrome evaluation removes the observed serial bottleneck.
+    {
         const auto hardStart = perf_clock::now();
         auto bchBits = std::make_shared<std::vector<uint8_t>>(
-            static_cast<size_t>(k_ldpc) * static_cast<size_t>(validCount));
+            static_cast<size_t>(k_ldpc) * static_cast<size_t>(blocks));
         auto ids = std::make_shared<std::vector<int>>();
-        ids->reserve(static_cast<size_t>(validCount));
+        ids->reserve(static_cast<size_t>(blocks));
 
         uint8_t *bchOut = bchBits->data();
         for(int lane = 0; lane < blocks; ++lane) {
-            if(!laneValid[lane])
-                continue;
             ids->push_back(plp_id[lane]);
             for(int i = 0; i < k_ldpc; ++i) {
                 int8_t *s = reinterpret_cast<code_type*>(simd + i);
                 *bchOut++ = s[lane] < 0 ? 1 : 0;
             }
         }
+        emit check(static_cast<int>(bchBits->size()), bchBits->data());
         diag.hardNs += perfNs(hardStart);
 
         auto ownedPost = std::make_shared<owned_l1_post>(l1_post);
+        emit bit_bch(ids->data(), ownedPost->value, int(bchBits->size()), bchBits->data());
         const auto waitStart = perf_clock::now();
         auto permit = acquire_async_queue_slot(bchQueueSlots());
         diag.bchWaitNs += perfNs(waitStart);
@@ -346,9 +346,6 @@ void ldpc_decoder::execute(int* _idx_plp_simd, l1_postsignalling _l1_post,
                                   static_cast<int>(bchBits->size()), bchBits->data());
             },
             Qt::QueuedConnection);
-    }
-    else {
-        ++diag.skippedBchBatches;
     }
 
     diag.totalNs += perfNs(totalStart);
@@ -372,7 +369,7 @@ void ldpc_decoder::execute(int* _idx_plp_simd, l1_postsignalling _l1_post,
                    .arg(diag.validBlocks)
                    .arg(diag.invalidBlocks)
                    .arg(avgIterations, 0, 'f', 2)
-                   .arg(TRIALS)
+                   .arg(maxTrials)
                    .arg(diag.packNs * ms, 0, 'f', 2)
                    .arg(diag.coreNs * ms, 0, 'f', 2)
                    .arg(corePerBlock, 0, 'f', 3)

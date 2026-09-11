@@ -139,10 +139,15 @@ class P2AcquisitionTest {
     bytes[2*i]=char(qBound(-127,int(std::lround(c.real()*128)),127));bytes[2*i+1]=char(qBound(-127,int(std::lround(c.imag()*128)),127));
    }
    HackRfSettings settings;settings.sampleRateHz=rate;RxHackRfPro rx(settings);rx.m_running.store(true);rx.m_metricsTimer.start();rx.m_settleSamples=0;
-   for(int pos=0;pos<bytes.size();pos+=8192){rx.processSamples(reinterpret_cast<uint8_t*>(bytes.data()+pos),qMin(8192,bytes.size()-pos));}
+   // Acquisition accuracy must not depend on sanitizer/CPU speed. Keep the
+   // producer below the bounded live queue; overflow is tested separately.
+   for(int pos=0;pos<bytes.size();pos+=8192){
+    rx.processSamples(reinterpret_cast<uint8_t*>(bytes.data()+pos),qMin(8192,bytes.size()-pos));
+    if((pos/8192)%8==7)QMetaObject::invokeMethod(rx.m_demodulator,[]{},Qt::BlockingQueuedConnection);
+   }
    QMetaObject::invokeMethod(rx.m_demodulator,[]{},Qt::BlockingQueuedConnection);
    qInfo()<<"CS8->P1->P2 rate"<<rate<<"P1"<<rx.m_demodulator->p1Matches<<"PRE"<<rx.m_demodulator->l1PreMatches<<"CP"<<rx.m_demodulator->cpConfidence;
-   assert(rx.m_demodulator->l1PreMatches==1&&rx.m_demodulator->l1PostMatches==1);rx.stop();
+   assert(rx.m_queueDrops.load()==0);assert(rx.m_demodulator->l1PreMatches==1&&rx.m_demodulator->l1PostMatches==1);rx.stop();
   }
  }
  static void frequencyCorrection(){

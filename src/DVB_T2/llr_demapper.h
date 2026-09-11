@@ -22,6 +22,8 @@
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
+#include <QTimer>
+#include "async_pipeline_payload.h"
 
 #include "dvbt2_definition.h"
 #include "ldpc_decoder.h"
@@ -46,6 +48,7 @@ public slots:
     void execute(int _ti_block_size, complex* _time_deint_cell,
                  int _plp_id, l1_postsignalling _l1_post);
     void stop();
+    void flushPending();
 
 private:
     struct ldpc_batch {
@@ -56,8 +59,11 @@ private:
         int blocks = 0;
         std::vector<int8_t> soft;
         std::vector<int> ids;
+        std::shared_ptr<owned_l1_post> post;
     };
 
+    void dispatchBatch(ldpc_batch &batch);
+    QTimer *flushTimer;
     QThread* thread;
     QMutex* mutex_in;
     l1_postsignalling l1_post;

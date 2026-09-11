@@ -1,3 +1,6 @@
+#include <QJsonDocument>
+#include <QJsonObject>
+#include "diagnostics.h"
 /* HackRF T2 Viewer - main window, GPL-3.0-or-later */
 #include "main_window.h"
 
@@ -82,7 +85,7 @@ MainWindow::~MainWindow()
 
 void MainWindow::buildUi()
 {
-    setWindowTitle(QStringLiteral("HackRF T2 Viewer 1.4"));
+    setWindowTitle(QStringLiteral("HackRF T2 Viewer %1").arg(QString::fromLatin1(Diagnostics::version())));
     setMinimumSize(1180, 740);
     resize(1460, 900);
 
@@ -915,7 +918,7 @@ void MainWindow::exportDiagnostics()
     }
     QTextStream out(&file);
     out.setCodec("UTF-8");
-    out << "HackRF T2 Viewer diagnostics\n";
+    out << "HackRF T2 Viewer diagnostics\n" << Diagnostics::environment();
     out << "Generated: " << QDateTime::currentDateTime().toString(Qt::ISODate) << "\n\n";
     out << "Device: " << m_deviceInfo.boardName << "\n";
     out << "Revision: " << m_deviceInfo.boardRevision << "\n";
@@ -945,8 +948,38 @@ void MainWindow::exportDiagnostics()
     out << "TEI errors: " << m_transportMetrics.transportErrors << "\n";
     out << "Continuity errors: " << m_transportMetrics.continuityErrors << "\n";
     out << "Sync losses: " << m_transportMetrics.syncLosses << "\n\n";
+    out << "BCH frames: " << m_transportMetrics.bchFrames << "\n";
+    out << "BCH failed: " << m_transportMetrics.bchFailedFrames << "\n";
+    out << "BB frames: " << m_transportMetrics.bbFrames << "\n";
+    out << "BB header errors: " << m_transportMetrics.bbHeaderErrors << "\n";
     out << "--- Log ---\n" << m_log->toPlainText() << "\n";
+    // Include the most recent worker events in the report itself. Copy all
+    // bounded session logs and CSVs alongside it for detailed analysis.
+    const QString session = Diagnostics::sessionDir();
+    QStringList copyErrors;
+    const QString bundle = path + QStringLiteral(".files");
+    if(!session.isEmpty() && QDir().mkpath(bundle)) {
+        for(const auto &entry : QDir(session).entryInfoList(QDir::Files)) {
+            if(!QFile::copy(entry.absoluteFilePath(), QDir(bundle).filePath(entry.fileName())))
+                copyErrors << entry.fileName();
+            if(entry.suffix() == QStringLiteral("log")) {
+                QFile log(entry.absoluteFilePath());
+                if(log.open(QIODevice::ReadOnly)) {
+                    log.seek(qMax(qint64(0), log.size() - 256 * 1024));
+                    out << "\n--- " << entry.fileName() << " (tail) ---\n" << QString::fromUtf8(log.readAll());
+                }
+            }
+        }
+        out << "\nAttached files: " << bundle << "\n";
+    } else copyErrors << QStringLiteral("Cannot create diagnostics folder");
+    out.flush();
+    const bool reportOk = file.error() == QFileDevice::NoError;
     file.close();
+    if(!reportOk || !copyErrors.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("Диагностика"),
+            QStringLiteral("Отчёт сохранён не полностью. Ошибки: %1").arg(copyErrors.join(QStringLiteral(", "))));
+        return;
+    }
     appendLog(QStringLiteral("Диагностический отчёт сохранён: %1").arg(path));
 }
 
@@ -1031,7 +1064,19 @@ void MainWindow::updatePipeline()
 void MainWindow::loadIq()
 {
     QString path=QFileDialog::getOpenFileName(this,QStringLiteral("I/Q signed int8 I,Q. Задайте исходную частоту дискретизации."),QString(),QStringLiteral("I/Q (*.cs8 *.iq);;Все файлы (*)"));
-    if(path.isEmpty())return;stopReceiver();m_iqPath=path;appendLog(QStringLiteral("Источник I/Q: ")+path);startReceiver();
+    if(path.isEmpty())return;
+    stopReceiver();
+    QFile metadata(path+QStringLiteral(".json"));
+    if(metadata.open(QIODevice::ReadOnly)) {
+        const auto object=QJsonDocument::fromJson(metadata.read(65536)).object();
+        const double rate=object.value(QStringLiteral("sample_rate_hz")).toDouble();
+        const int index=m_sampleRate->findData(rate);
+        if(index>=0) m_sampleRate->setCurrentIndex(index);
+        const double frequency=object.value(QStringLiteral("frequency_hz")).toDouble();
+        if(frequency>=1e6 && frequency<=6e9) m_frequencyMhz->setValue(frequency/1e6);
+        appendLog(QStringLiteral("Метаданные I/Q прочитаны: %1 MS/s").arg(m_sampleRate->currentData().toDouble()/1e6));
+    }
+    m_iqPath=path;appendLog(QStringLiteral("Источник I/Q: ")+path);startReceiver();
 }
 void MainWindow::savePreferences()
 {

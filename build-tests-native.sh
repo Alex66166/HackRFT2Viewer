@@ -7,8 +7,9 @@ mkdir -p "$BUILD/obj" "$BUILD/moc"
 export LD_LIBRARY_PATH="$QT_NATIVE/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export QT_QPA_PLATFORM=offscreen
 export QT_QPA_PLATFORM_PLUGIN_PATH="$QT_NATIVE/lib/x86_64-linux-gnu/qt5/plugins/platforms"
-export ASAN_OPTIONS=detect_leaks=0
-FLAGS=(-std=gnu++17 -O1 -g -fPIC -mavx2 -msse4.1 -DQT_WIDGETS_LIB -DQT_PRINTSUPPORT_LIB -DQT_GUI_LIB -DQT_NETWORK_LIB -DQT_CONCURRENT_LIB -DQT_CORE_LIB
+export ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0}"
+export UBSAN_OPTIONS="${UBSAN_OPTIONS:-halt_on_error=1:print_stacktrace=1}"
+FLAGS=(-DQT_NO_OPENGL -std=gnu++17 -O1 -g -fPIC -mavx2 -msse4.1 -DQT_WIDGETS_LIB -DQT_PRINTSUPPORT_LIB -DQT_GUI_LIB -DQT_NETWORK_LIB -DQT_CONCURRENT_LIB -DQT_CORE_LIB
  -MMD -MP -I"$ROOT/src" -I"$ROOT/src/DVB_T2" -I"$ROOT/src/DSP" -I"$ROOT/src/fftw3" -I"$ROOT/src/third_party/libusb" -I"$ROOT/src/third_party/libhackrf"
  -I"$QT_NATIVE/include" -I"$QT_NATIVE/include/x86_64-linux-gnu/qt5")
 for module in QtCore QtGui QtWidgets QtNetwork QtConcurrent QtPrintSupport;do FLAGS+=(-I"$QT_NATIVE/include/x86_64-linux-gnu/qt5/$module");done
@@ -42,9 +43,9 @@ for object in "$BUILD"/obj/*.o;do
  CORE+=("$object")
 done
 if [[ "${SKIP_CORE:-0}" != 1 ]];then
- for name in ${TESTS:-p1_acquisition_test p2_acquisition_test receiver_regression_test bch_corrector_test transport_output_test};do
+ for name in ${TESTS:-p1_acquisition_test p2_acquisition_test receiver_regression_test bch_corrector_test fec_vector_test transport_output_test diagnostics_test};do
   g++ "${FLAGS[@]}" "$ROOT/tests/$name.cpp" "${CORE[@]}" "${LIBS[@]}" -o "$BUILD/$name"
-  timeout "${TEST_TIMEOUT:-120}" "$BUILD/$name"
+  timeout "${TEST_TIMEOUT:-120}" "$BUILD/$name" "$@"
  done
 fi
 if [[ "${NO_GUI:-0}" == 1 ]];then exit 0;fi

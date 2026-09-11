@@ -1,22 +1,55 @@
-# Regression summary for 1.4.0
+Regression summary: 1.4.2-RC1, 2026-09-11
+Native Linux x64 / Qt 5.15.13 / ASan + UBSan, leak detection disabled.
+GUI: offscreen CPU rendering (QT_NO_OPENGL), no Windows hardware validation.
+
 P1 amplitude 0.5 PASS
 P1 amplitude 0.1 PASS
 P1 amplitude 0.02 PASS
 P1 amplitude 0.005 PASS
+L1 pre corrected errors 0 PASS
+L1 pre corrected errors 1 PASS
+L1 pre corrected errors 6 PASS
+L1 pre corrected errors 12 PASS
+L1 pre corrected errors 20 PASS
+L1 POST FEC modulation 0 scrambled false PASS
+L1 POST FEC modulation 0 scrambled true PASS
+L1 POST FEC modulation 1 scrambled false PASS
+L1 POST FEC modulation 1 scrambled true PASS
+L1 POST FEC modulation 2 scrambled false PASS
+L1 POST FEC modulation 2 scrambled true PASS
+L1 POST FEC modulation 3 scrambled false PASS
+L1 POST FEC modulation 3 scrambled true PASS
+L1 POST demapping / deinterleaving / descrambling / PLP parsing PASS
+P2 equalization timing offset 0 PASS
+P2 equalization timing offset 11 PASS
+P2 equalization timing offset -11 PASS
+P2 equalization timing offset 230 PASS
+P2 equalization timing offset -230 PASS
+p2_acquisition_test PASS
+Owned I/Q queue P1 at 8e+06 PASS
 Owned I/Q queue P1 at 1e+07 PASS
 Owned I/Q queue P1 at 1.25e+07 PASS
 Owned I/Q queue P1 at 1.6e+07 PASS
 Owned I/Q queue P1 at 2e+07 PASS
+Bounded queue sheds 24 stale blocks and drains remaining 16 PASS
 Single PLP ID17 slice and non-rotated I/Q pairing PASS
+TI destruction PASS; constructing QAM
+QAM construction PASS
 All constellations, short/normal FEC, 32+1 lanes PLP index1 PASS
 LDPC single lane through BCH PASS
 receiver_regression_test PASS
 BCH all 12 FEC/rate combinations, 0..capacity errors PASS
+Independent nonzero QPSK 4/5, parity bypass, 33 frames PASS
+64-QAM 4/5 at 20 dB AWGN, 32 frames PASS
+Independent nonzero 64-QAM 4/5, TI length 0 FEC frames 33 PASS
+Independent nonzero 64-QAM 4/5, TI length 1 FEC frames 33 PASS
+Independent nonzero 64-QAM 4/5, TI length 3 FEC frames 108 PASS
 BBFRAME split packets, PLP ID17, normal true file/PSI PASS; UDP PASS
 BBFRAME split packets, PLP ID17, normal false file/PSI PASS; UDP PASS
 transport_output_test PASS
+Bounded diagnostic log rotation and oversized message PASS
 GUI start / I/Q playback / retune / stop x3 PASS
-Direct resampler standalone benchmark (Linux x86_64, -O2 -mavx2): PASS
-  input 4.194 M samples, output 4.793 M, expected 4.793 M
-  mean amplitude 1.000001, measured tone 1000000.0 Hz
-  elapsed 0.403 s, 10.40 MS/s input incl. test-tone generation
+
+Offline actual IQ recording (release build, backpressured producer):
+RESULT bytes 57817088 sample_rate 1e+07 input_ms 2890.85 elapsed_ms 2062 drops 0 P1/L1pre/L1post 6 5 5 BCH total/failed 624 624 TSbytes 0
+Exit code 3: NO TRANSPORT STREAM. This is not a working TV reception result.

@@ -22,8 +22,8 @@ QSemaphore &qamQueueSlots()
 {
     // Enough elasticity for short LDPC bursts without allowing an
     // unbounded queue of large TI blocks.
-    static QSemaphore slots(8);
-    return slots;
+    static QSemaphore queueSlots(8);
+    return queueSlots;
 }
 }
 
@@ -37,7 +37,7 @@ time_deinterleaver::time_deinterleaver(QMutex *_mutex, QObject *parent) :
     thread = new QThread;
     thread->setObjectName("llr_demapper");
     qam->moveToThread(thread);
-    connect(this, &time_deinterleaver::ti_block, qam, &llr_demapper::execute,Qt::BlockingQueuedConnection);
+
     connect(thread, &QThread::finished, qam, &QObject::deleteLater);
     thread->start(QThread::HighPriority);
     // Ensure its event loop is running before immediate stop/restart can occur.
@@ -151,7 +151,9 @@ void time_deinterleaver::start(dvbt2_parameters _dvbt2, l1_presignalling _l1_pre
         }
         switch (l1_post.plp[i].time_il_type) {
         case 0:
-            n_ti[i] = qMax(1,l1_post.plp[i].time_il_length);
+            n_ti[i] = l1_post.plp[i].time_il_length == 0
+                ? qMax(1,l1_post.plp[i].plp_num_blocks_max)
+                : l1_post.plp[i].time_il_length;
             p_i[i] = 1;
             break;
         case 1:
@@ -280,6 +282,7 @@ void time_deinterleaver::l1_dyn_execute(l1_postsignalling _l1_post, int _len_in,
     for(int i = 0; i < num_plp; ++i){
         slice_end[i] = l1_post.dyn.plp[i].start + l1_post.dyn.plp[i].num_blocks *
                         cells_per_fec_block[i] / p_i[i] - 1;
+        if(l1_post.plp[i].time_il_length == 0) n_ti[i] = qMax(1,l1_post.dyn.plp[i].num_blocks);
         int fec_blocks_per_ti_block = static_cast<int>(floorf(static_cast<float>(l1_post.dyn.plp[i].num_blocks) /
                                              static_cast<float>(n_ti[i]) * static_cast<float>(p_i[i])));
         for(int j = 0; j < n_ti[i]; ++j){
@@ -307,6 +310,7 @@ void time_deinterleaver::execute(int _len_in, complex* _ofdm_cell)
         if(count <= 0 || source == nullptr || qam == nullptr) return;
         auto cells = std::make_shared<std::vector<complex>>(source, source + count);
         auto post = std::make_shared<owned_l1_post>(l1_post);
+        emit ti_block(count, cells->data(), index, post->value);
         auto permit = acquire_async_queue_slot(qamQueueSlots());
         llr_demapper *receiver = qam;
         QMetaObject::invokeMethod(receiver,

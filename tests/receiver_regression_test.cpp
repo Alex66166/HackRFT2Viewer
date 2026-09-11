@@ -28,6 +28,17 @@ public:
    assert(rx.m_pendingBlocks.load()==0);assert(rx.m_demodulator->p1Matches>0);
    qInfo()<<"Owned I/Q queue P1 at"<<rate<<"PASS";rx.stop();
   }
+  {
+   HackRfSettings settings;RxHackRfPro rx(settings);QSemaphore entered,release;
+   rx.m_running.store(true);rx.m_metricsTimer.start();rx.m_settleSamples=0;
+   QMetaObject::invokeMethod(rx.m_demodulator,[&]{entered.release();release.acquire();},Qt::QueuedConnection);
+   entered.acquire();QByteArray bytes(4096,0);
+   for(int i=0;i<40;++i)rx.processSamples(reinterpret_cast<const uint8_t*>(bytes.constData()),bytes.size());
+   assert(rx.m_queueDrops.load()==24);assert(rx.m_pendingBlocks.load()==16);
+   release.release();QMetaObject::invokeMethod(rx.m_demodulator,[]{},Qt::BlockingQueuedConnection);
+   assert(rx.m_pendingBlocks.load()==0);rx.stop();
+   qInfo()<<"Bounded queue sheds 24 stale blocks and drains remaining 16 PASS";
+  }
   QMutex mutex;
   {
    time_deinterleaver ti(&mutex);QObject::disconnect(&ti,&time_deinterleaver::ti_block,ti.qam,&llr_demapper::execute);
@@ -54,9 +65,10 @@ public:
     },Qt::DirectConnection);
     const float norm[]={float(NORM_FACTOR_QPSK),float(NORM_FACTOR_QAM16),float(NORM_FACTOR_QAM64),float(NORM_FACTOR_QAM256)};
     std::vector<complex> cells(33*fec/(2*(mod+1)),complex(norm[mod],norm[mod]));
-    qam.execute(cells.size(),cells.data(),1,post);assert(total==33*fec&&calls==2);QObject::disconnect(connection);
+    qam.execute(cells.size(),cells.data(),1,post);qam.flushPending();assert(total==33*fec&&calls==2);QObject::disconnect(connection);
    }
    qInfo()<<"All constellations, short/normal FEC, 32+1 lanes PLP index1 PASS";
+   QMetaObject::invokeMethod(qam.decoder,[]{},Qt::BlockingQueuedConnection);
    int ids[32]={1};std::vector<int8_t> bits(16200,48);bool delivered=false;
    l1_postsignalling_plp plps[2];plps[1].id=17;l1_postsignalling post;post.num_plp=2;post.plp=plps;
    QObject::connect(qam.decoder,&ldpc_decoder::bit_bch,&qam,[&](int *indexes,l1_postsignalling,int n,uint8_t *data){

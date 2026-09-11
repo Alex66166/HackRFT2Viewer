@@ -16,7 +16,7 @@ class BchCorrector {
  std::array<uint8_t,6750> packed{};
 public:
  int correct(uint8_t* bits,int n,int k,bool shortFrame) {
-  if(!bits || k<=0 || n>54000 || (k&7) || (n&7)) return -1;
+  if(!bits || k<=0 || n<=k || n>54000 || (k&7) || (n&7)) return -1;
   if((shortFrame && n-k!=168) || (!shortFrame && n-k!=160 && n-k!=192)) return -1;
   for(int i=0;i<n/8;++i) { uint8_t byte=0; for(int j=0;j<8;++j) byte=uint8_t((byte<<1)|(bits[8*i+j]&1)); packed[i]=byte; }
   auto *data=packed.data(), *parity=data+k/8;

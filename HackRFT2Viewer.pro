@@ -27,6 +27,7 @@ SOURCES += \
     $$PWD/src/DVB_T2/LDPC/tables_handler.cc
 
 HEADERS += \
+    $$PWD/src/diagnostics.h \
     $$PWD/src/main_window.h \
     $$PWD/src/rx_hackrf_pro.h \
     $$PWD/src/plot.h \

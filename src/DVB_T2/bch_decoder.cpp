@@ -21,8 +21,8 @@
 namespace {
 QSemaphore &bbQueueSlots()
 {
-    static QSemaphore slots(16);
-    return slots;
+    static QSemaphore queueSlots(16);
+    return queueSlots;
 }
 using perf_clock = std::chrono::steady_clock;
 inline quint64 perfNs(perf_clock::time_point start)
