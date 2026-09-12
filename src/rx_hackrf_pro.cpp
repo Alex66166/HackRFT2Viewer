@@ -241,7 +241,7 @@ void RxHackRfPro::resetPipeline()
                    "frontend_stats_ms,iq_correct_ms,coarse_rotate_ms,demod_outer_ms,spectrum_ms,"
                    "demod_input_rotate_ms,resampler_ms,symbol_acquire_ms,p1_ms,guard_ms,fft_ms,p2_ms,"
                    "data_demod_ms,fc_demod_ms,downstream_data_wait_ms,downstream_control_wait_ms,"
-                   "p1_calls,fft_calls,p2_calls,data_calls,fc_calls,p1_matches,p2_attempts,l1_pre,l1_post,l1_pre_errors\n";
+                   "p1_calls,fft_calls,p2_calls,data_calls,fc_calls,p1_matches,p2_attempts,l1_pre,l1_post,l1_pre_errors,cp_quality_symbols,cp_coherence,cp_repeatability_db,residual_carrier_hz\n";
             out.flush();
             emit receiverStage(QStringLiteral("Внутренний профиль DSP: %1").arg(m_stageProfilePath));
         }
@@ -469,6 +469,8 @@ void RxHackRfPro::processBlock(const QByteArray &bytes)
     m.droppedLastInterval=m.droppedBuffers-m_lastDropCount;m_lastDropCount=m.droppedBuffers;
     m.p2Attempts=m_demodulator->p2Attempts;m.l1PreErrors=m_demodulator->l1PreErrors;
     m.guardSamples=m_demodulator->measuredGuard;m.cpConfidence=m_demodulator->cpConfidence;m.coarseCorrectionHz=m_coarseHz;
+    m.guardCoherence=m_demodulator->guardCoherence;m.guardRepeatabilityDb=m_demodulator->guardRepeatabilityDb;
+    m.residualFrequencyHz=m_demodulator->residualFrequencyHz;m.guardQualitySymbols=m_demodulator->guardQualitySymbols;
     if(m_stageProfileFile.isOpen() && m_stageProfileFile.size() > 8 * 1024 * 1024) {
         QFile previous(m_stageProfilePath);
         QByteArray header;
@@ -505,7 +507,8 @@ void RxHackRfPro::processBlock(const QByteArray &bytes)
             << ms(demodProfile.downstreamControlNs) << ',' << demodProfile.p1Calls << ','
             << demodProfile.fftCalls << ',' << demodProfile.p2Calls << ',' << demodProfile.dataCalls << ','
             << demodProfile.fcCalls << ',' << m.p1Matches << ',' << m.p2Attempts << ','
-            << m.l1PreMatches << ',' << m.l1PostMatches << ',' << m.l1PreErrors << '\n';
+            << m.l1PreMatches << ',' << m.l1PostMatches << ',' << m.l1PreErrors << ','
+            << m.guardQualitySymbols << ',' << m.guardCoherence << ',' << m.guardRepeatabilityDb << ',' << m.residualFrequencyHz << '\n';
         out.flush();
     }
     m_metricSamples=0;m_sumSquares=0;m_peak=0;m_clippedComponents=0;m_dspNanoseconds=0;m_metricsTimer.restart();

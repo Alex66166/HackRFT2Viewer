@@ -270,6 +270,7 @@ QWidget *MainWindow::buildReceiverPage()
     auto *metrics = new QHBoxLayout;
     metrics->addWidget(makeMetricCard(QStringLiteral("Синхронизация"), &m_lockValue));
     metrics->addWidget(makeMetricCard(QStringLiteral("SNR"), &m_snrValue));
+    m_snrValue->setToolTip(QStringLiteral("Оценка по ближайшим точкам созвездия может быть завышена при большом числе ошибок. Приём подтверждают корректные BCH-блоки и транспортный поток."));
     metrics->addWidget(makeMetricCard(QStringLiteral("Уровень"), &m_levelValue));
     metrics->addWidget(makeMetricCard(QStringLiteral("Перегрузка"), &m_clipValue));
     metrics->addWidget(makeMetricCard(QStringLiteral("USB поток"), &m_usbValue));
@@ -798,7 +799,7 @@ void MainWindow::updateGainAdvice()
         text = QStringLiteral("Перегрузка АЦП: сначала выключите RF AMP, затем уменьшайте LNA и VGA примерно поровну.");
         styleName = QStringLiteral("adviceBad");
     } else if(m_radioMetrics.l1PostMatches && !m_serviceCount) {
-        text=QStringLiteral("L1/PLP найден, но TS пока не декодирован: проверьте частоту, антенну и усиление. При BCH-ошибках сначала устраните потери I/Q, затем добивайтесь SNR.");
+        text=QStringLiteral("Параметры L1/PLP прочитаны, но транспортный поток пока не восстановлен. Значение SNR само по себе не подтверждает приём. Счётчики BCH, потерь I/Q и качество защитного интервала сохраняются в диагностике.");
         styleName=QStringLiteral("adviceWarn");
     } else if(m_radioMetrics.rmsDbfs < -38.0 && m_snr < 8.0) {
         text = QStringLiteral("Сигнал слабый: добавляйте LNA и VGA по одному шагу. RF AMP включайте последним.");
@@ -938,6 +939,10 @@ void MainWindow::exportDiagnostics()
     out << "Narrowband: " << settings.narrowbandFilter << "\n";
     out << "CLKOUT: " << settings.clockOut << "\n\n";
     out << "SNR dB: " << m_snr << "\n";
+    out << "CP quality symbols: " << m_radioMetrics.guardQualitySymbols << "\n";
+    out << "CP coherence: " << m_radioMetrics.guardCoherence << "\n";
+    out << "CP repeatability dB (not calibrated C/N): " << m_radioMetrics.guardRepeatabilityDb << "\n";
+    out << "Residual carrier offset Hz: " << m_radioMetrics.residualFrequencyHz << "\n";
     out << "RMS dBFS: " << m_radioMetrics.rmsDbfs << "\n";
     out << "Peak dBFS: " << m_radioMetrics.peakDbfs << "\n";
     out << "Clip percent: " << m_radioMetrics.clipPercent << "\n";

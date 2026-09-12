@@ -43,7 +43,7 @@ for object in "$BUILD"/obj/*.o;do
  CORE+=("$object")
 done
 if [[ "${SKIP_CORE:-0}" != 1 ]];then
- for name in ${TESTS:-p1_acquisition_test p2_acquisition_test receiver_regression_test bch_corrector_test fec_vector_test transport_output_test diagnostics_test};do
+ for name in ${TESTS:-p1_acquisition_test p2_acquisition_test receiver_regression_test bch_corrector_test fec_vector_test transport_output_test diagnostics_test full_rf_test};do
   g++ "${FLAGS[@]}" "$ROOT/tests/$name.cpp" "${CORE[@]}" "${LIBS[@]}" -o "$BUILD/$name"
   timeout "${TEST_TIMEOUT:-120}" "$BUILD/$name" "$@"
  done

@@ -55,6 +55,41 @@ It compares every recovered systematic bit with the original, including QPSK
 4/5 and rotated 64-QAM 4/5 with TI lengths 0, 1 and 3 (33/33/108 FEC words).
 It is a synthetic FEC test, not a complete RF-to-video broadcast test.
 
+## Full RF-to-TS regression added on 2026-09-12
+
+`full_rf_test` now constructs 108 **different** BBFRAME payloads containing known
+TS packets, BCH/LDPC encodes them, applies rotated 64-QAM and TI length 3, builds
+32K extended / GI 1/16 / PP4 OFDM frames, independently resamples to 10 MS/s,
+and quantizes to signed 8-bit I/Q. It passes those samples through the real
+receiver input, DSP workers and transport writer. Every recovered systematic
+bit and every output TS byte is compared with the original. The default 20 dB
+AWGN case recovers 324/324 FEC words and 2,071,008 TS bytes without errors.
+This test is part of the default sanitizer gate before Windows packaging.
+Pilot generation and frequency-address tables are shared with the receiver;
+this is not an independent certification of those tables. The TS payload is
+a deterministic test payload, not encoded television video.
+
+A separate release-build pacing check feeds 12 frames at 10 MS/s without waiting
+for the DSP after each USB-sized block. It recovered 1,188/1,188 FEC words and
+7,593,696 exact TS bytes with zero queue drops on the current Linux environment.
+This approximately three-second check does not certify sustained Windows/USB
+performance. Run it without sanitizers:
+
+```bash
+REALTIME_RF=1 QT_NATIVE=/usr SANITIZE=0 NO_GUI=1 TESTS=full_rf_test \
+  bash build-tests-native.sh 20
+```
+
+The direct elementary-rate diagnostic variant (`DIRECT_RF=1`) previously recovered
+324/324 repeated-payload words at 18 dB. At 15 dB it recovered none. These are
+measurements of this test setup, not a universal reception threshold.
+
+Continuous CP coherence, CP repeatability in dB, its symbol count, and residual
+carrier offset are now included in the bounded DSP CSV and exported report.
+CP repeatability is **not calibrated C/N**: timing error, multipath and
+interference also affect it. The GUI explains that its nearest-constellation
+SNR estimate alone does not establish reception.
+
 ## Actual recording result
 
 The provided file contains 57,817,088 bytes (2.8908544 seconds at 10 MS/s).
@@ -68,6 +103,16 @@ are **not established**. Zero drops in the offline harness are not a hardware
 load result: its producer waits for the demodulator after every block.
 Both reduced frontend loop activity and an experimental increase to 100 LDPC
 iterations failed to recover TS; those experimental changes are not enabled.
+Further complex/pilot-smoothed equalizers and weighted 64-point max-log demapping
+also recovered no valid BCH words. Investigative data replacement and unbounded
+FFT/TI dumps were removed from production code.
+
+The new continuous measurement on the supplied recording is CP coherence 0.9693,
+repeatability about 15.0 dB and residual carrier offset about -0.53 Hz at EOF.
+A check on the raw CS8 samples, before the receiver DSP, also finds reduced
+CP repeatability. Together with the controlled noise tests, this makes input
+quality a plausible limiting factor, **not proof that every software issue is
+excluded or that antenna/gain settings are the sole cause**.
 
 To reproduce without hardware:
 

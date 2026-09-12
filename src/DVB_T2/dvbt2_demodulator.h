@@ -82,6 +82,8 @@ class dvbt2_demodulator : public QObject
 public:
     quint64 processedSamples=0,p1Matches=0,l1PreMatches=0,l1PostMatches=0,p2Attempts=0,l1PreErrors=0;
     int measuredGuard=0;float cpConfidence=0;
+    double guardCoherence=0,guardRepeatabilityDb=0,residualFrequencyHz=0;
+    quint64 guardQualitySymbols=0;
     void discontinuity();
     dvbt2_stage_profile take_stage_profile();
     explicit dvbt2_demodulator(float _level_min, float _sample_rate, QObject *parent = nullptr);

@@ -69,6 +69,8 @@ struct RadioMetrics
     double dspLoadPercent=0,dspMegaSamplesPerSecond=0,coarseCorrectionHz=0;
     quint64 p2Attempts=0,l1PreErrors=0,droppedLastInterval=0;
     int backlog=0,guardSamples=0;float cpConfidence=0;
+    double guardCoherence=0,guardRepeatabilityDb=0,residualFrequencyHz=0;
+    quint64 guardQualitySymbols=0;
 };
 
 Q_DECLARE_METATYPE(HackRfDeviceInfo)

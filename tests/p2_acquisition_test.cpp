@@ -9,10 +9,11 @@
 #include <random>
 #include <QMetaObject>
 class P2AcquisitionTest {
+ static inline bool fullPayload=false;
  static void put(std::vector<uint8_t>& bits,uint32_t value,int n){for(int i=n-1;i>=0;--i)bits.push_back((value>>i)&1);}
  static std::vector<uint8_t> payload(int gi,int s2=5){
   std::vector<uint8_t>b;
-  const int fields[][2]={{0,8},{0,1},{0,3},{s2,3},{0,1},{0,1},{gi,3},{0,4},{0,4},{0,2},{0,2},{1500,18},{318,18},{6,4},{0,8},{1,16},{0x3085,16},{0x8001,16},{2,8},{100,12},{0,3},{0,1},{1,3},{0,3},{1,4},{0,1},{0,1},{0,4}};
+  const int fields[][2]={{0,8},{fullPayload?1:0,1},{0,3},{s2,3},{0,1},{0,1},{gi,3},{0,4},{0,4},{0,2},{0,2},{1500,18},{318,18},{fullPayload?3:6,4},{0,8},{1,16},{0x3085,16},{0x8001,16},{2,8},{fullPayload?63:100,12},{0,3},{0,1},{1,3},{0,3},{1,4},{0,1},{0,1},{0,4}};
   for(auto &f:fields)put(b,f[0],f[1]);assert(b.size()==168);
   uint32_t crc=0xffffffff;for(int bit:b){bool x=((crc>>31)&1)^bit;crc<<=1;if(x)crc^=0x04c11db7;}put(b,crc,32);return b;
  }
@@ -40,7 +41,7 @@ class P2AcquisitionTest {
  }
  static std::vector<uint8_t> postPayload(){
   std::vector<uint8_t> b;
-  const uint32_t fields[][2]={{1,15},{1,8},{0,4},{0,8},{0,3},{586000000,32},{17,8},{1,3},{3,5},{0,1},{0,3},{0,8},{1,8},{0,3},{0,3},{0,1},{0,2},{1,10},{1,8},{1,8},{0,1},{0,1},{0,1},{0,11},{0,2},{0,1},{0,1},{0,2},{0,30},{0,8},{0,22},{0,22},{0,8},{0,3},{0,8},{17,8},{0,22},{1,10},{0,8},{0,8}};
+  const uint32_t fields[][2]={{1,15},{1,8},{0,4},{0,8},{0,3},{586000000,32},{17,8},{1,3},{3,5},{0,1},{0,3},{0,8},{1,8},{fullPayload?4u:0u,3},{fullPayload?2u:0u,3},{fullPayload?1u:0u,1},{fullPayload?1u:0u,2},{fullPayload?108u:1u,10},{1,8},{fullPayload?3u:1u,8},{0,1},{0,1},{0,1},{0,11},{0,2},{0,1},{0,1},{0,2},{0,30},{0,8},{0,22},{0,22},{0,8},{0,3},{0,8},{17,8},{0,22},{fullPayload?108u:1u,10},{0,8},{0,8}};
   for(auto &f:fields)put(b,f[0],f[1]);assert(b.size()==318);
   uint32_t crc=0xffffffff;for(auto bit:b){bool x=((crc>>31)&1)^bit;crc<<=1;if(x)crc^=0x04c11db7;}put(b,crc,32);return b;
  }
@@ -163,6 +164,10 @@ class P2AcquisitionTest {
   for(int pos=0;pos<int(input.size());pos+=777)rotate_samples(input.data()+pos,out.data()+pos,std::min(777,int(input.size())-pos),phase,step,.03);
   for(int i=0;i<int(out.size());++i)assert(std::abs(out[i]-input[i]*std::polar(1.f,float(std::remainder(.14+(i+1)*step,2*M_PI))))<1e-5f);
  }
+public:
+ static void fullFrame(double snr);
 public:static void run(){oscillator();frequencyCorrection();fec();postFec();equalizer();acquisition();frontend();}
 };
+#ifndef P2_NO_MAIN
 int main(int argc,char **argv){QCoreApplication app(argc,argv);P2AcquisitionTest::run();qInfo()<<"p2_acquisition_test PASS";}
+#endif

@@ -10,7 +10,7 @@
 #include "DVB_T2/LDPC/ldpc.hh"
 #include "DVB_T2/LDPC/dvb_t2_tables.hh"
 namespace Reference {
-inline std::vector<uint8_t> bch(int n, int k, bool shortFrame, int seed = 1)
+inline std::vector<uint8_t> bch(int n, int k, bool shortFrame, int seed = 1, const std::vector<uint8_t>* payload = nullptr)
 {
     const int m = shortFrame ? 14 : 16, order = (1 << m) - 1;
     const int primitive = shortFrame ? 0x402b : 0x1002d;
@@ -35,6 +35,7 @@ inline std::vector<uint8_t> bch(int n, int k, bool shortFrame, int seed = 1)
     std::vector<uint8_t> bits(n),remainder;
     uint32_t random=uint32_t(seed);
     for(int i=0;i<k;++i){random^=random<<13;random^=random>>17;random^=random<<5;bits[i]=random&1;}
+    if(payload) {assert(int(payload->size())==k);std::copy(payload->begin(),payload->end(),bits.begin());}
     remainder=bits;
     for(int i=0;i<k;++i)if(remainder[i])
         for(int j=0;j<=n-k;++j)remainder[i+j]^=uint8_t(generator[n-k-j]);
@@ -68,7 +69,7 @@ inline std::vector<std::complex<float>> qam64(const std::vector<uint8_t>& coded)
     }
     return out;
 }
-inline std::vector<std::complex<float>> interleave(const std::vector<std::complex<float>>& fec, int blocks, int tiLength)
+inline std::vector<std::complex<float>> interleave(const std::vector<std::complex<float>>& fec, int blocks, int tiLength, const std::vector<std::vector<std::complex<float>>>* frames = nullptr)
 {
     const int size=int(fec.size()),rows=size/5;
     int degree=0;while((1<<degree)<size)++degree;
@@ -82,6 +83,7 @@ inline std::vector<std::complex<float>> interleave(const std::vector<std::comple
     assert(int(perm.size())==size);
     std::vector<std::complex<float>> out;
     const int tiBlocks=tiLength?tiLength:blocks;
+    int frameIndex=0;
     for(int t=0;t<tiBlocks;++t){
         const int count=blocks/tiBlocks+(t>=tiBlocks-blocks%tiBlocks?1:0);
         std::vector<std::complex<float>> cells(count*size);
@@ -89,7 +91,8 @@ inline std::vector<std::complex<float>> interleave(const std::vector<std::comple
         for(int b=0;b<count;++b){
             int shift;
             do {int x=shiftCandidate++;shift=0;for(int i=0;i<degree;++i){shift=(shift|(x&1))<<1;x>>=1;}}while(shift>=size);
-            for(int c=0;c<size;++c)cells[b*size+(perm[c]+shift)%size]={fec[c].real(),fec[(c+size-1)%size].imag()};
+            const auto &source=frames?(*frames)[frameIndex++]:fec;
+            for(int c=0;c<size;++c)cells[b*size+(perm[c]+shift)%size]={source[c].real(),source[(c+size-1)%size].imag()};
         }
         if(tiLength){int columns=count*5;for(int row=0;row<rows;++row)for(int col=0;col<columns;++col)out.push_back(cells[col*rows+row]);}
         else out.insert(out.end(),cells.begin(),cells.end());

@@ -53,3 +53,16 @@ GUI start / I/Q playback / retune / stop x3 PASS
 Offline actual IQ recording (release build, backpressured producer):
 RESULT bytes 57817088 sample_rate 1e+07 input_ms 2890.85 elapsed_ms 2062 drops 0 P1/L1pre/L1post 6 5 5 BCH total/failed 624 624 TSbytes 0
 Exit code 3: NO TRANSPORT STREAM. This is not a working TV reception result.
+
+2026-09-12 continuation (release build unless explicitly stated):
+Full RF fixture: 108 distinct BBFRAMEs, 32K extended, GI1/16, PP4,
+rotated 64-QAM 4/5, TI3, independent 10 MS/s CS8 interpolation/quantization.
+At 20 dB AWGN: 324/324 BCH frames accepted, zero systematic bit mismatches,
+2,071,008 output TS bytes exactly match the reference.
+At 10 MS/s paced input with 12 frames: 1,188/1,188 accepted, zero bit
+mismatches, 7,593,696 exact TS bytes, zero queue drops (Linux only, ~3 seconds).
+The supplied IQ still fails: 624/624 BCH failed, TSbytes 0, drops 0.
+CP coherence 0.969261; repeatability 14.9875 dB; residual -0.528513 Hz.
+Repeatability is a diagnostic, not a calibrated C/N measurement.
+Full default suite including full_rf_test and GUI smoke test passed locally
+with ASan + UBSan on 2026-09-12 (leak detection disabled, Qt offscreen).

@@ -43,6 +43,7 @@ public:
         qInfo()<<"RESULT bytes"<<bytes<<"sample_rate"<<rate<<"input_ms"<<bytes*500.0/rate
                <<"elapsed_ms"<<clock.elapsed()<<"drops"<<rx.m_queueDrops.load()
                <<"P1/L1pre/L1post"<<demod->p1Matches<<demod->l1PreMatches<<demod->l1PostMatches
+               <<"CP coherence/repeatability_dB/residual_Hz"<<demod->guardCoherence<<demod->guardRepeatabilityDb<<demod->residualFrequencyHz
                <<"BCH total/failed"<<metrics.bchFrames<<metrics.bchFailedFrames<<"TSbytes"<<tsBytes;
         rx.stop();return tsBytes>0?0:3;
     }

@@ -121,6 +121,7 @@ void dvbt2_demodulator::reset()
     sample_rate_est_filtered = 0;
     resample =  sample_rate / (SAMPLE_RATE * upsample);
     p2_init = false;cpConfidence=0;measuredGuard=0;
+    guardCoherence=0;guardRepeatabilityDb=0;residualFrequencyHz=0;guardQualitySymbols=0;
     demodulator_init = false;
     next_symbol_type = SYMBOL_TYPE_P1;
 }
@@ -260,6 +261,22 @@ void dvbt2_demodulator::symbol_acquisition(int _len_in, complex* _in, signal_est
                     sum += (cp[i] * conj(buffer_sym[i]));
                 }
                 frequency_est = std::arg(sum) / dvbt2.fft_size * SAMPLE_RATE / sample_rate;
+                // Compare repeated samples away from CP boundaries. This is
+                // a modulation-independent quality diagnostic, not calibrated C/N:
+                // multipath, timing error and interference also reduce coherence.
+                const int margin=std::max(16,std::min(256,dvbt2.guard_interval_size/4));
+                std::complex<double> repeat{};double energy=0;
+                for(int i=margin;i<dvbt2.guard_interval_size-margin;++i){
+                    repeat+=std::complex<double>(cp[i]*conj(buffer_sym[i]));
+                    energy+=std::norm(cp[i])+std::norm(buffer_sym[i]);
+                }
+                if(energy>1e-15){
+                    const double coherence=std::clamp(2*std::abs(repeat)/energy,0.,1.-1e-9);
+                    guardCoherence=guardQualitySymbols?0.95*guardCoherence+0.05*coherence:coherence;
+                    guardRepeatabilityDb=10*std::log10(std::max(1e-9,guardCoherence)/(1-guardCoherence));
+                    residualFrequencyHz=std::arg(repeat)/dvbt2.fft_size*SAMPLE_RATE/(2*M_PI);
+                    ++guardQualitySymbols;
+                }
                 float max_integral = 0.5f / dvbt2.fft_size;
                 frequency_est_filtered += loop_filter_frequency_offset(frequency_est, max_integral);
             }
