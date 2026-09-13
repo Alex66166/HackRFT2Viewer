@@ -28,6 +28,8 @@ jobs:
           python3 tests/gnuradio_reference.py generate "$RUNNER_TEMP/gr-reference"
           bash build-tests-native.sh "$RUNNER_TEMP/gr-reference/input.cs8" "$RUNNER_TEMP/gr-output.ts"
           python3 tests/gnuradio_reference.py verify "$RUNNER_TEMP/gr-reference" "$RUNNER_TEMP/gr-output.ts"
+          NO_GUI=0 SKIP_CORE=1 GUI_TEST=gui_iq_replay_test bash build-tests-native.sh "$RUNNER_TEMP/gr-reference/input.cs8" "$RUNNER_TEMP/gr-gui-output.ts"
+          python3 tests/gnuradio_reference.py verify "$RUNNER_TEMP/gr-reference" "$RUNNER_TEMP/gr-gui-output.ts"
 
   source-archive:
     name: Full source archive

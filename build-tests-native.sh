@@ -53,5 +53,6 @@ GUI=()
 for source in "$ROOT/src/main_window.cpp" "$ROOT/src/plot.cpp" "$ROOT/src/qcustomplot.cpp" "$BUILD/moc/moc_plot.cpp" "$BUILD/moc/moc_qcustomplot.cpp";do
  base="$(basename "$source")";object="$BUILD/obj/${base%.*}.o";compile "$source" "$object";GUI+=("$object")
 done
-g++ "${FLAGS[@]}" "$ROOT/tests/gui_smoke_test.cpp" "${CORE[@]}" "${GUI[@]}" "${LIBS[@]}" -o "$BUILD/gui_smoke_test"
-timeout "${TEST_TIMEOUT:-120}" "$BUILD/gui_smoke_test"
+GUI_TEST="${GUI_TEST:-gui_smoke_test}"
+g++ "${FLAGS[@]}" "$ROOT/tests/$GUI_TEST.cpp" "${CORE[@]}" "${GUI[@]}" "${LIBS[@]}" -o "$BUILD/$GUI_TEST"
+timeout "${TEST_TIMEOUT:-120}" "$BUILD/$GUI_TEST" "$@"

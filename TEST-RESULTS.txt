@@ -79,3 +79,11 @@ matches original cyclic source byte-for-byte, FFprobe reads MPEG-2 video
 warnings are present; this is not a Windows/VLC or hardware playback test.
 The original recording remains unresolved: 624/624 BCH failed, TS=0.
 CI run 34690116274 for commit 4a47474: native tests and Windows packaging PASS.
+
+GUI replay follow-up, 2026-09-13, ASan + UBSan:
+Before fix: 120 ms of the file discarded as tuner settling; 324 accepted FEC,
+11,168 packets / 2,099,584 bytes; discovered video service shown as DEMOD.
+After fix: 432/432 accepted FEC, 14,891 packets / 2,799,508 exact TS bytes.
+Independent video service discovered and TS LOCK retained after SNR updates.
+Normal file timer and partial-batch timer exercised; no manual DSP flush.
+Start/replay/retune/stop x3 smoke test PASS.

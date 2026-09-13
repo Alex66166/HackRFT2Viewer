@@ -172,3 +172,26 @@ zero TS bytes**. Its reception is not fixed. This independent single-PLP test
 does not certify every multi-PLP path or establish the cause of that failure.
 No new hardware capture or installation is required from the user for these
 software checks.
+
+## GUI replay fixes verified on 2026-09-13
+
+The independent encoded-video fixture exposed two GUI-path defects:
+
+- File replay applied the physical tuner's 120 ms settling discard. That lost
+  the first P1 and one additional T2 frame: GUI replay recovered only 324 FEC
+  words / 11,168 packets, versus 432 / 14,891 through the CLI. Settling is now
+  applied only to hardware input. GUI and CLI recover the same complete TS.
+- A late SNR notification overwrote `TS LOCK` with `DEMOD` after service
+  discovery. SNR now updates its own display; receiver/service state controls
+  the lock indicator.
+
+`gui_iq_replay_test` drives MainWindow and its normal file timer, including
+backpressure and the application's own partial-FEC-batch timeout. It requires
+all expected FEC words and TS packets, then the independent Python verifier
+compares every output byte. The GUI check is included in the same CI gate.
+Release is still a diagnostic candidate; these fixes do not recover the
+supplied noisy/two-PLP recording.
+
+The encoded-video GUI trial under ASan/UBSan now discovers `Independent_Test`,
+keeps `TS LOCK`, accepts 432/432 BCH frames and writes 2,799,508 exact source
+bytes. The separate start/replay/retune/stop smoke test also passes.

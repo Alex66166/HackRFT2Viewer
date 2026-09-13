@@ -227,7 +227,9 @@ void RxHackRfPro::resetPipeline()
     clearBlockQueue();
     *m_signal=signal_estimate{};
     m_actualFrequencyHz=m_channelFrequencyHz;
-    m_settleSamples=int(m_settings.sampleRateHz*0.12);
+    // Only a physical tuner needs settling time. Recorded samples are already
+    // stable; discarding their beginning can lose an additional T2 frame.
+    m_settleSamples=m_settings.iqFile.isEmpty()?int(m_settings.sampleRateHz*0.12):0;
     m_coarsePhase=0.0;m_coarseHz=0.0;
     m_lastSequence=0;m_lastDropCount=m_queueDrops.load();m_haveSequence=false;
     m_profileStatsNs=m_profileIqNs=m_profileCoarseNs=m_profileDemodNs=m_profileSpectrumNs=0;

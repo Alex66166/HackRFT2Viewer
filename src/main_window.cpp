@@ -638,7 +638,7 @@ void MainWindow::connectDemodulator()
     connect(demod->deinterleaver,&time_deinterleaver::replace_constelation,this,[havePlp,plpPlot](int n,complex* p){havePlp->store(true);plpPlot(n,p);},Qt::DirectConnection);
     connect(demod,&dvbt2_demodulator::replace_null_indicator,this,[this,session](float a,float b){if(session==m_session)m_frequencyPlot->replace_null_indicator(a,b);});
     connect(demod->deinterleaver->qam,&llr_demapper::signal_noise_ratio,this,[this,session](float snr){
-        if(session!=m_session)return;m_snr=snr;m_snrValue->setText(QStringLiteral("%1 дБ").arg(snr,0,'f',1));m_lockValue->setText(QStringLiteral("DEMOD"));
+        if(session!=m_session)return;m_snr=snr;m_snrValue->setText(QStringLiteral("%1 дБ").arg(snr,0,'f',1));
         if(m_scanning)m_scanBestSnr=qMax(m_scanBestSnr,double(snr));updateGainAdvice();
     });
     connect(demod->p2_demodulator,&p2_symbol::view_l1_presignalling,this,[this,session](QString info){if(session==m_session)m_l1Info->setPlainText(info);});
