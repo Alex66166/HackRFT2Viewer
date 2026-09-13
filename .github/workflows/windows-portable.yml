@@ -12,12 +12,22 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install native test dependencies
-        run: sudo apt-get update && sudo apt-get install -y g++ ripgrep qtbase5-dev qtbase5-dev-tools libfftw3-dev libusb-1.0-0-dev
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends g++ ripgrep qtbase5-dev qtbase5-dev-tools libfftw3-dev libusb-1.0-0-dev gnuradio python3-scipy
       - name: Run receiver, FEC, transport and GUI tests
         env:
           QT_NATIVE: /usr
           SANITIZE: '1'
         run: bash build-tests-native.sh
+      - name: Verify independent GNU Radio RF-to-TS interoperability
+        env:
+          QT_NATIVE: /usr
+          SANITIZE: '1'
+          NO_GUI: '1'
+          TESTS: iq_replay_test
+        run: |
+          python3 tests/gnuradio_reference.py generate "$RUNNER_TEMP/gr-reference"
+          bash build-tests-native.sh "$RUNNER_TEMP/gr-reference/input.cs8" "$RUNNER_TEMP/gr-output.ts"
+          python3 tests/gnuradio_reference.py verify "$RUNNER_TEMP/gr-reference" "$RUNNER_TEMP/gr-output.ts"
 
   source-archive:
     name: Full source archive

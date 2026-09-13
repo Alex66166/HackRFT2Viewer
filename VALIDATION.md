@@ -127,3 +127,48 @@ TS presence alone does not prove clean video or error-free transport.
 No HackRF is attached to the build environment. Windows runtime/WinUSB and real
 broadcast playback still need verification. The CI build log is authoritative
 for whether the Windows executable and portable ZIP were built successfully.
+
+## Independent GNU Radio interoperability check (2026-09-13)
+
+`tests/gnuradio_reference.py` uses GNU Radio's gr-dtv transmitter, with no
+receiver encoders, pilot tables, frequency permutations or fixture helpers.
+The transmitter originates in [gr-dvbt2](https://github.com/drmpeg/gr-dvbt2),
+whose author reports verification against BBC DVB-T2 reference streams.
+This is an interoperability check, not formal DVB certification.
+
+The tested profile is 32K extended, GI 1/16, PP4, rotated normal-frame
+64-QAM 4/5, TI length 3, one PLP with 108 FEC blocks, 63 data symbols,
+QPSK L1-post and high-efficiency TS input. SciPy independently resamples the
+transmitter output from 64/7 MS/s to 10 MS/s and adds 20 dB AWGN before CS8
+quantization. None of the generated samples clip.
+
+Five T2 frames produce 24,393,600 CS8 bytes. After first-frame acquisition,
+the receiver accepts **432/432 FEC blocks**, recovering **14,891 packets /
+2,799,508 TS bytes**. Every byte is compared against distinct source packets;
+the check also requires the complete expected sequence, so truncation,
+duplicates and missing packets fail. Both release and ASan/UBSan runs pass.
+The independent check is now part of the native gate before Windows packaging.
+
+To reproduce on Linux with GNU Radio 3.10, NumPy, SciPy and the native receiver
+build dependencies:
+
+```bash
+python3 tests/gnuradio_reference.py generate /tmp/gr-reference
+QT_NATIVE=/usr SANITIZE=1 NO_GUI=1 TESTS=iq_replay_test \
+  bash build-tests-native.sh /tmp/gr-reference/input.cs8 /tmp/gr-output.ts
+python3 tests/gnuradio_reference.py verify /tmp/gr-reference /tmp/gr-output.ts
+```
+
+A separate manual trial used an FFmpeg-generated MPEG-2 video / MP2 audio TS
+in the same transmitter chain. The receiver discovered `Independent_Test`;
+its 2,799,508 output bytes matched the corresponding cyclic source bytes
+exactly. FFprobe read 584 video frames and 994 audio frames. It warned at the
+incomplete video boundaries because reception starts and ends within GOPs.
+This validates service discovery and a decodable video/audio transport stream;
+it does not validate Windows VLC playback or a physical HackRF input.
+
+The supplied two-PLP recording still yields **624/624 failed BCH blocks and
+zero TS bytes**. Its reception is not fixed. This independent single-PLP test
+does not certify every multi-PLP path or establish the cause of that failure.
+No new hardware capture or installation is required from the user for these
+software checks.

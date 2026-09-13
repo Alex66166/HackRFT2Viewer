@@ -66,3 +66,16 @@ CP coherence 0.969261; repeatability 14.9875 dB; residual -0.528513 Hz.
 Repeatability is a diagnostic, not a calibrated C/N measurement.
 Full default suite including full_rf_test and GUI smoke test passed locally
 with ASan + UBSan on 2026-09-12 (leak detection disabled, Qt offscreen).
+
+2026-09-13: independent GNU Radio 3.10.9.2 transmitter (no receiver tables).
+32K extended / GI1/16 / PP4 / rotated 64-QAM normal 4/5 / TI3 / 108 FEC.
+5 T2 frames, independent 10 MS/s resampling, 20 dB AWGN and CS8 quantization.
+Release: P1/L1pre/L1post 5/5/5, BCH total/failed 432/0, zero queue drops.
+ASan + UBSan: same counts, no sanitizer finding (leak detection disabled).
+Both: 14,891 packets, 2,799,508 exact TS bytes; no gaps or duplicates.
+Manual encoded-video trial: service Independent_Test discovered; output TS
+matches original cyclic source byte-for-byte, FFprobe reads MPEG-2 video
+(584 frames, 320x180) and MP2 audio (994 frames). Incomplete GOP boundary
+warnings are present; this is not a Windows/VLC or hardware playback test.
+The original recording remains unresolved: 624/624 BCH failed, TS=0.
+CI run 34690116274 for commit 4a47474: native tests and Windows packaging PASS.
