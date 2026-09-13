@@ -63,8 +63,8 @@ private:
     std::vector<l1_postsignalling_aux> aux;
     std::vector<dynamic_plp> dynPlp;
     std::vector<dynamic_plp> dynNextPlp;
-    std::vector<int> dynAux;
-    std::vector<int> dynNextAux;
+    std::vector<uint64_t> dynAux;
+    std::vector<uint64_t> dynNextAux;
 };
 
 // RAII slot for a bounded queued stage. If a queued metacall is discarded

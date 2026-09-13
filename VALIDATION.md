@@ -195,3 +195,42 @@ supplied noisy/two-PLP recording.
 The encoded-video GUI trial under ASan/UBSan now discovers `Independent_Test`,
 keeps `TS LOCK`, accepts 432/432 BCH frames and writes 2,799,508 exact source
 bytes. The separate start/replay/retune/stop smoke test also passes.
+
+## L1 dynamic signalling and Windows runtime gate (2026-09-13)
+
+The L1-post parser contained several independent defects outside the profile
+of the supplied recording: repeated dynamic data began at the wrong offset;
+next-frame RF/block counts overwrote current-frame values; next-frame PLP and
+AUX arrays were not allocated; 48-bit AUX fields used 32-bit storage/shifts;
+reserved/AUX fields accumulated stale values or retained only their last bit.
+The configurable FEF-length-MSB/reserved fields also used the wrong offset.
+These are corrected against ETSI EN 302 755 V1.4.1, clauses 7.2.3.1–3:
+https://www.etsi.org/deliver/etsi_en/302700_302799/302755/01.04.01_60/en_302755v010401p.pdf
+
+New field vectors cover one/two PLPs, zero/two AUX streams, repetition on/off,
+different current/next scheduling, all 48 AUX bits, a second cleared frame,
+owned asynchronous snapshots and every truncated length. They pass under
+ASan/UBSan, as do the existing P2 FEC/acquisition tests. These checks do not
+claim support for decoding auxiliary payloads or for TFS/FEF reception.
+
+CI now transfers the independently verified GNU Radio IQ fixture and exact
+expected TS to Windows. A test entry point uses the same GUI and receiver
+sources, replays through the application's file timer, and checks every FEC
+word and packet count. The packaged DLLs are exercised with the MinGW tools
+removed from PATH; SHA-256 must match the exact reference TS before the
+portable ZIP is published. This gate does not exercise a physical USB device.
+
+### Upstream receiver comparison
+
+The unmodified DVB-T2 sources of voxo22/HackRF_dvbt2_receiver at
+`a70ca1af05a0495944fe1df06ff11b68bca73432` were built separately with a small
+Qt console replay harness, lossless backpressure and decoding enabled:
+https://github.com/voxo22/HackRF_dvbt2_receiver/tree/a70ca1af05a0495944fe1df06ff11b68bca73432
+
+On the older five-frame GNU Radio 20 dB control recording it accepted 216 BCH
+words and produced 1,399,472 TS bytes. Every emitted packet matched the
+source, but one sequence gap remained. On the supplied 57,817,088-byte
+HackRF recording it detected P1 but delivered no valid L1-post frames and
+zero TS bytes. This comparison does not establish the cause of the supplied
+recording's failure; it establishes that this fork is not a verified drop-in
+solution for it. No decoder changes from that fork were copied into this app.

@@ -30,6 +30,17 @@ jobs:
           python3 tests/gnuradio_reference.py verify "$RUNNER_TEMP/gr-reference" "$RUNNER_TEMP/gr-output.ts"
           NO_GUI=0 SKIP_CORE=1 GUI_TEST=gui_iq_replay_test bash build-tests-native.sh "$RUNNER_TEMP/gr-reference/input.cs8" "$RUNNER_TEMP/gr-gui-output.ts"
           python3 tests/gnuradio_reference.py verify "$RUNNER_TEMP/gr-reference" "$RUNNER_TEMP/gr-gui-output.ts"
+          cp "$RUNNER_TEMP/gr-gui-output.ts" "$RUNNER_TEMP/gr-reference/expected.ts"
+      - name: Save independent Windows receiver fixture
+        uses: actions/upload-artifact@v7
+        with:
+          name: Independent-DVB-T2-Fixture
+          path: |
+            ${{ runner.temp }}/gr-reference/input.cs8
+            ${{ runner.temp }}/gr-reference/fixture.json
+            ${{ runner.temp }}/gr-reference/expected.ts
+          retention-days: 7
+          if-no-files-found: error
 
   source-archive:
     name: Full source archive
@@ -88,6 +99,9 @@ jobs:
           test -n "$EXE"
           mkdir -p build-portable/HackRFT2Viewer-Portable-1.4.2-RC1
           cp "$EXE" build-portable/HackRFT2Viewer-Portable-1.4.2-RC1/HackRFT2Viewer.exe
+          "$QMAKE" HackRFT2Viewer.pro CONFIG+=release CONFIG+=gui_iq_test
+          /mingw64/bin/mingw32-make.exe -j2
+          cp release/GuiIqReplayTest.exe build-portable/HackRFT2Viewer-Portable-1.4.2-RC1/
 
       - name: Deploy Qt runtime
         run: |
@@ -175,6 +189,37 @@ jobs:
 
           $dst = Join-Path $PWD 'build-portable/HackRFT2Viewer-Portable-1.4.2-RC1/vlc'
           Copy-Item -Recurse -Force $src $dst
+
+      - name: Download independently verified RF fixture
+        uses: actions/download-artifact@v8
+        with:
+          name: Independent-DVB-T2-Fixture
+          path: windows-rf-fixture
+
+      - name: Run packaged Windows GUI receiver and compare exact TS
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dist = (Resolve-Path 'build-portable/HackRFT2Viewer-Portable-1.4.2-RC1').Path
+          $fixture = (Resolve-Path 'windows-rf-fixture').Path
+          $output = Join-Path $fixture 'windows-output.ts'
+          # Resolve libraries exclusively from the portable folder and Windows.
+          # The build toolchain on PATH must not hide a missing runtime DLL.
+          $env:PATH = "$dist;$env:SystemRoot\System32;$env:SystemRoot"
+          $env:QT_OPENGL = 'software'
+          $env:QT_PLUGIN_PATH = $dist
+          $env:QT_QPA_PLATFORM_PLUGIN_PATH = Join-Path $dist 'platforms'
+          $exe = Join-Path $dist 'GuiIqReplayTest.exe'
+          $arguments = '"{0}" "{1}"' -f (Join-Path $fixture 'input.cs8'), $output
+          $process = Start-Process -FilePath $exe -ArgumentList $arguments -PassThru -NoNewWindow
+          if (-not $process.WaitForExit(90000)) { $process.Kill(); throw 'Windows GUI receiver timed out' }
+          if ($process.ExitCode -ne 0) { throw "Windows GUI receiver failed: $($process.ExitCode)" }
+          $expected = (Get-FileHash -Algorithm SHA256 (Join-Path $fixture 'expected.ts')).Hash
+          $actual = (Get-FileHash -Algorithm SHA256 $output).Hash
+          if ($actual -ne $expected) { throw "Windows TS differs from the independently verified source: $actual" }
+          Write-Host "Windows GUI RF-to-TS PASS: $((Get-Item $output).Length) exact bytes, SHA256 $actual"
+          Remove-Item $exe
 
       - name: Package and checksum
         shell: pwsh

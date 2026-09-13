@@ -87,3 +87,9 @@ After fix: 432/432 accepted FEC, 14,891 packets / 2,799,508 exact TS bytes.
 Independent video service discovered and TS LOCK retained after SNR updates.
 Normal file timer and partial-batch timer exercised; no manual DSP flush.
 Start/replay/retune/stop x3 smoke test PASS.
+
+2026-09-13: L1 multiple PLPs / repeated dynamic / 48-bit AUX / truncation PASS (ASan/UBSan).
+P2 acquisition/FEC/equalizer/frontend regression suite PASS after parser fixes.
+Independent upstream fork a70ca1a: control 216 accepted BCH / 1399472 TS bytes;
+source packets match but one gap; supplied user recording P1 only / L1-post 0 / TS 0.
+New Windows packaged-GUI RF-to-TS gate added; see the commit's Actions run for its result.

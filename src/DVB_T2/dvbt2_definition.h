@@ -18,6 +18,7 @@
 #include <QCoreApplication>
 //#include <QDebug>
 #include <complex>
+#include <cstdint>
 #include <math.h>
 
 typedef std::complex<float> complex;
@@ -323,7 +324,7 @@ typedef struct a_26{
     int reserved_1 = 0;
     dynamic_plp* plp = nullptr;
     int reserved_3 = 0;
-    int* aux_private_dyn  = nullptr;
+    uint64_t* aux_private_dyn = nullptr;
 }l1_postsignalling_dynamic;
 struct l1_postsignalling{
     int sub_slices_per_frame = 0;

@@ -88,6 +88,49 @@ class P2AcquisitionTest {
    assert(p.l1_post_info());assert(p.l1_post.num_plp==1&&p.l1_post.plp[0].id==17&&p.l1_post.dyn.plp[0].id==17);delete[] p.l1_post.rf;p.l1_post.rf=nullptr;
   }qInfo()<<"L1 POST demapping / deinterleaving / descrambling / PLP parsing PASS";
  }
+ // ETSI 7.2.3.1-3 field vectors, independent of the receiver offset math.
+ // In particular, next-frame PLP values must never overwrite the current ones.
+ static void repeatedDynamicFields(){
+  for(int count:{1,2})for(int aux:{0,2})for(bool repeated:{false,true}){
+   p2_symbol p;p.l1_pre.num_rf=1;p.l1_pre.s2_field2=0;p.l1_pre.l1_repetition_flag=repeated;
+   p.l1_post.rf=new l1_postsignalling_rf[7]{};p.l1_post_bit=new uint8_t[7032]{};
+   std::vector<uint8_t> bits;
+   auto add=[&](uint64_t v,int n){for(int i=n-1;i>=0;--i)bits.push_back((v>>i)&1);};
+   add(1,15);add(count,8);add(aux,4);add(0,8);add(0,3);add(586000000,32);
+   auto original=postPayload();
+   for(int i=0;i<count;++i){add(17+i,8);bits.insert(bits.end(),original.begin()+78,original.begin()+159);}
+   add(2,2);add(0x2345678,30);
+   for(int i=0;i<aux;++i){add(i,4);add(0x1234567+i,28);}
+   auto dynamic=[&](bool next){
+    add(next?1:0,8);add(next?123:456,22);add(next?789:987,22);add(next?2:3,8);add(next?5:0,3);add(0xa5,8);
+    for(int i=0;i<count;++i){add(17+i,8);add((next?900:700)+i*100,22);add((next?48:108)+i,10);add(0x5a,8);}
+    add(next?0xc3:0x96,8);
+    for(int i=0;i<aux;++i)add((next?0xfedcba987654ULL:0x8123456789abULL)+i,48);
+   };
+   dynamic(false);if(repeated)dynamic(true);
+   std::copy(bits.begin(),bits.end(),p.l1_post_bit);
+   p.l1_pre.l1_post_info_size=bits.size();assert(p.parse_l1_post_fields());
+   assert(p.l1_post.fef_length_msb==2 && p.l1_post.reserved_2==0x2345678);
+   assert(p.l1_post.dyn.start_rf_idx==0 && p.l1_post.dyn.reserved_3==0x96);
+   for(int i=0;i<count;++i){assert(p.l1_post.dyn.plp[i].num_blocks==108+i);assert(p.l1_post.dyn.plp[i].start==700+i*100);}
+   for(int i=0;i<aux;++i)assert(p.l1_post.dyn.aux_private_dyn[i]==0x8123456789abULL+i);
+   if(repeated){
+    assert(p.l1_post.dyn_next.frame_idx==1 && p.l1_post.dyn_next.start_rf_idx==5 && p.l1_post.dyn_next.reserved_3==0xc3);
+    for(int i=0;i<count;++i){assert(p.l1_post.dyn_next.plp[i].num_blocks==48+i);assert(p.l1_post.dyn_next.plp[i].start==900+i*100);}
+    for(int i=0;i<aux;++i)assert(p.l1_post.dyn_next.aux_private_dyn[i]==0xfedcba987654ULL+i);
+   }
+   owned_l1_post snapshot(p.l1_post);
+   // Repeat with cleared dynamic bits: no stale accumulation or shallow copies.
+   const size_t start=70+89*count+32+32*aux;
+   std::fill(p.l1_post_bit+start,p.l1_post_bit+bits.size(),0);
+   assert(p.parse_l1_post_fields());assert(p.l1_post.dyn.plp[0].num_blocks==0);
+   for(int i=0;i<aux;++i){assert(p.l1_post.dyn.aux_private_dyn[i]==0);assert(snapshot.value.dyn.aux_private_dyn[i]==0x8123456789abULL+i);}
+   assert(snapshot.value.dyn.plp[0].num_blocks==108);
+   if(repeated)assert(snapshot.value.dyn_next.plp[0].num_blocks==48);
+   for(int size=0;size<int(bits.size());++size){p.l1_pre.l1_post_info_size=size;assert(!p.parse_l1_post_fields());}
+  }
+  qInfo()<<"L1 multiple PLPs / repeated dynamic / 48-bit AUX / truncation PASS";
+ }
  static std::vector<complex> p2freq(p2_symbol& p,int gi,int offset=0){
   auto cells=encoded(gi,p.fft_size==16384?4:5);cells.resize(p.c_p2);std::mt19937 random(3456);
   auto post=postCells(0,false);std::copy(post.begin(),post.end(),cells.begin()+1840);
@@ -166,7 +209,7 @@ class P2AcquisitionTest {
  }
 public:
  static void fullFrame(double snr);
-public:static void run(){oscillator();frequencyCorrection();fec();postFec();equalizer();acquisition();frontend();}
+public:static void run(){oscillator();frequencyCorrection();fec();postFec();repeatedDynamicFields();equalizer();acquisition();frontend();}
 };
 #ifndef P2_NO_MAIN
 int main(int argc,char **argv){QCoreApplication app(argc,argv);P2AcquisitionTest::run();qInfo()<<"p2_acquisition_test PASS";}

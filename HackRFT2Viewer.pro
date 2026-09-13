@@ -44,3 +44,12 @@ win32 {
     LIBS += -L$$PWD/src/fftw3 -llibfftw3f-3
     LIBS += -lwinpthread -ldwmapi -luxtheme -lversion -lnetapi32 -luserenv -liphlpapi
 }
+
+# Exercise the same Windows GUI/receiver objects in CI, with a test entry point.
+contains(CONFIG, gui_iq_test) {
+    TARGET = GuiIqReplayTest
+    CONFIG += console
+    CONFIG -= windows
+    SOURCES -= $$PWD/src/main.cpp
+    SOURCES += $$PWD/tests/gui_iq_replay_test.cpp
+}

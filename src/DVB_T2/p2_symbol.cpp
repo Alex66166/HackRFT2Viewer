@@ -38,6 +38,8 @@ p2_symbol::~p2_symbol()
     if(l1_post_bit_interleaving != nullptr) delete [] l1_post_bit_interleaving;
     if(l1_post.dyn.plp != nullptr) delete [] l1_post.dyn.plp;
     if(l1_post.dyn.aux_private_dyn != nullptr) delete [] l1_post.dyn.aux_private_dyn;
+    delete [] l1_post.dyn_next.plp;
+    delete [] l1_post.dyn_next.aux_private_dyn;
 }
 //-------------------------------------------------------------------------------------------
 void p2_symbol::init(dvbt2_parameters &_dvbt2, pilot_generator* _pilot,
@@ -721,8 +723,16 @@ bool p2_symbol::l1_post_info()
 
     }
 
-    chek_l1_post = true;
-    idx = 15;
+    chek_l1_post = parse_l1_post_fields();
+    return chek_l1_post;
+}
+
+// CRC/FEC have already been checked by l1_post_info. Validate the complete
+// variable layout before any field reader accesses PLP or AUX data.
+bool p2_symbol::parse_l1_post_fields()
+{
+    if(l1_pre.l1_post_info_size < 35) return false;
+    int idx = 15;
     l1_post.num_plp = 0;
     for(int s = 7; s >= 0 ; --s){
         l1_post.num_plp |= l1_post_bit[idx++] << s;
@@ -736,19 +746,24 @@ bool p2_symbol::l1_post_info()
     }
     if(l1_post.aux == nullptr) l1_post.aux = new l1_postsignalling_aux[15]{};
     idx_l1_post_aux_shift = (l1_post.num_aux - 1) * 32;
-    // TODO check l1_post.num_aux != 0
-//    if(l1_post.dyn.aux_private_dyn == nullptr) l1_post.dyn.aux_private_dyn = new int[l1_post.num_aux];
-    idx_l1_post_dyn_aux_shift = (l1_post.num_aux - 1) * 48;
     idx_l1_post_configurable_shift = idx_l1_post_rf_shift + idx_l1_post_fef_shift +
                                         idx_l1_post_plp_shift + idx_l1_post_aux_shift + 223;
     if(l1_post.dyn.plp == nullptr) l1_post.dyn.plp = new dynamic_plp[255]{};
     idx_l1_post_dyn_plp_shift = (l1_post.num_plp - 1) * 48;
-    idx_l1_post_dyn_shift = idx_l1_post_configurable_shift + idx_l1_post_dyn_plp_shift +
-                            idx_l1_post_dyn_aux_shift + 71;
 
     const int currentEnd=idx_l1_post_configurable_shift+71+48*l1_post.num_plp+8+48*l1_post.num_aux;
     const int required=currentEnd+(l1_pre.l1_repetition_flag?71+48*l1_post.num_plp+8+48*l1_post.num_aux:0);
     if(!l1_post.num_plp || required>l1_pre.l1_post_info_size)return false;
+    // ETSI EN 302 755, 7.2.3.2/3: next-frame dynamic data follows the
+    // entire current dynamic part (71 + 48*PLPs + 8 + 48*AUX bits).
+    idx_l1_post_dyn_shift = currentEnd;
+    if(l1_post.num_aux && !l1_post.dyn.aux_private_dyn)
+        l1_post.dyn.aux_private_dyn = new uint64_t[15]{};
+    if(l1_pre.l1_repetition_flag) {
+        if(!l1_post.dyn_next.plp) l1_post.dyn_next.plp = new dynamic_plp[255]{};
+        if(l1_post.num_aux && !l1_post.dyn_next.aux_private_dyn)
+            l1_post.dyn_next.aux_private_dyn = new uint64_t[15]{};
+    }
     text_l1_post = "";
     time_frequency_slicing_info(l1_post_bit, l1_post);
     plp_info(l1_post_bit, l1_post);
@@ -961,13 +976,13 @@ void p2_symbol::fef_info(unsigned char *bit, l1_postsignalling &l1)
             l1.fef_interval |= bit[idx++] << s;
         }
     }
-    idx = idx_l1_post_rf_shift + idx_l1_post_fef_shift + idx_l1_post_plp_shift + 169;
+    idx = idx_l1_post_rf_shift + idx_l1_post_fef_shift + idx_l1_post_plp_shift + 159;
     l1.fef_length_msb = 0;
     for(int s = 1; s >= 0 ; --s){
         l1.fef_length_msb |= bit[idx++] << s;
     }
     l1.reserved_2 = 0;
-    for(int s = 1; s >= 0 ; --s){
+    for(int s = 29; s >= 0 ; --s){
         l1.reserved_2 |= bit[idx++] << s;
     }
     text_l1_post += "FEF_TYPE\t\t" + QString::number(l1_post.fef_type) + "\n"
@@ -1073,13 +1088,14 @@ void p2_symbol::dyn_plp_info(unsigned char *bit, l1_postsignalling &l1)
 void p2_symbol::dyn_aux_info(unsigned char *bit, l1_postsignalling &l1)
 {
     int idx = idx_l1_post_configurable_shift + idx_l1_post_dyn_plp_shift + 119;
-    l1.dyn_next.reserved_3 = 0;
+    l1.dyn.reserved_3 = 0;
     for(int s = 7; s >= 0; --s){
-        l1.dyn.reserved_3 = (bit[idx++] << s);
+        l1.dyn.reserved_3 |= (bit[idx++] << s);
     }
     for(int i = 0; i < l1.num_aux; i++){
+        l1.dyn.aux_private_dyn[i] = 0;
         for(int s = 47; s >=0; --s){
-            l1.dyn.aux_private_dyn[i] |= (bit[idx++] << s);
+            l1.dyn.aux_private_dyn[i] |= (uint64_t(bit[idx++]) << s);
         }
         text_l1_dynamic +=QString::number(i) +
               "  DYN_AUX_PRIVATE_DYN " + QString::number(l1_post.dyn.aux_private_dyn[i]) + "\n";
@@ -1108,7 +1124,7 @@ void p2_symbol::dyn_next_info(unsigned char *bit, l1_postsignalling &l1)
     }
     l1.dyn_next.start_rf_idx = 0;
     for(int s = 2; s >= 0; --s){
-        l1.dyn.start_rf_idx |= (bit[idx++] << s);
+        l1.dyn_next.start_rf_idx |= (bit[idx++] << s);
     }
     l1.dyn_next.reserved_1 = 0;
     for(int s = 7; s >= 0; --s){
@@ -1136,7 +1152,7 @@ void p2_symbol::dyn_next_plp_info(unsigned char *bit, l1_postsignalling &l1)
         }
         l1.dyn_next.plp[i].num_blocks = 0;
         for(int s = 9; s >= 0; --s){
-            l1.dyn.plp[i].num_blocks |= (bit[idx++] << s);
+            l1.dyn_next.plp[i].num_blocks |= (bit[idx++] << s);
         }
         l1.dyn_next.plp[i].reserved_2 = 0;
         for(int s = 7; s >= 0; --s){
@@ -1155,14 +1171,15 @@ void p2_symbol::dyn_next_plp_info(unsigned char *bit, l1_postsignalling &l1)
 //-------------------------------------------------------------------------------------------
 void p2_symbol::dyn_next_aux_info(unsigned char *bit, l1_postsignalling &l1)
 {
-    int idx = idx_l1_post_dyn_shift + 119;
+    int idx = idx_l1_post_dyn_shift + 71 + 48 * l1.num_plp;
     l1.dyn_next.reserved_3 = 0;
     for(int s = 7; s >= 0; --s){
-        l1.dyn_next.reserved_3 = (bit[idx++] << s);
+        l1.dyn_next.reserved_3 |= (bit[idx++] << s);
     }
     for(int i = 0; i < l1.num_aux; i++){
+        l1.dyn_next.aux_private_dyn[i] = 0;
         for(int s = 47; s >=0; --s){
-            l1.dyn_next.aux_private_dyn[i] |= (bit[idx++] << s);
+            l1.dyn_next.aux_private_dyn[i] |= (uint64_t(bit[idx++]) << s);
         }
         text_l1_dynamic += QString::number(i) +
               "  DYN_NEXT_AUX_PRIVATE_DYN " + QString::number(l1_post.dyn_next.aux_private_dyn[i]) + "\n";

@@ -98,7 +98,6 @@ private:
     int idx_l1_post_aux_shift = 0;
     int idx_l1_post_configurable_shift = 0;
     int idx_l1_post_dyn_plp_shift = 0;
-    int idx_l1_post_dyn_aux_shift = 0;
     int idx_l1_post_dyn_shift = 0;
     unsigned char l1_randomize[KBCH_1_2];
     void init_l1_randomizer();
@@ -106,6 +105,7 @@ private:
 
     QString text_l1_post;
     bool l1_post_info();
+    bool parse_l1_post_fields();
     unsigned char* l1_post_bit = nullptr;
     unsigned char* l1_post_bit_interleaving = nullptr;
     bool chek_l1_post = false;
