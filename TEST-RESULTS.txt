@@ -93,3 +93,13 @@ P2 acquisition/FEC/equalizer/frontend regression suite PASS after parser fixes.
 Independent upstream fork a70ca1a: control 216 accepted BCH / 1399472 TS bytes;
 source packets match but one gap; supplied user recording P1 only / L1-post 0 / TS 0.
 New Windows packaged-GUI RF-to-TS gate added; see the commit's Actions run for its result.
+
+2026-09-14 RC2:
+P1: all S1/S2 codewords, bounded bit-error correction and noise rejection PASS.
+BCH: locator precheck matches exhaustive Chien search; 12 FEC/rate combinations PASS.
+User IQ: P1/L1pre/L1post 12/11/11; BCH 1440 total, 1440 failed, TS 0.
+User IQ offline: 1924 ms for 2890.8544 ms input, drops 0.
+User IQ paced 10 MS/s: 2980 ms with final drain, drops 0; TS remains 0.
+GNU Radio control: 432/432 BCH, 2799508 exact bytes, 14891 packets, no gaps.
+Synthetic real-time RF: 1188/1188 BCH, 7593696 exact bytes, drops 0.
+59c1f76 Windows packaged GUI gate: PASS, 2799508 exact bytes.

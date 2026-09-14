@@ -52,7 +52,7 @@ jobs:
       - name: Upload full source archive
         uses: actions/upload-artifact@v7
         with:
-          name: HackRFT2Viewer-Full-Source-1.4.2-RC1
+          name: HackRFT2Viewer-Full-Source-1.4.2-RC2
           path: |
             .
             !.git/**
@@ -97,16 +97,16 @@ jobs:
             if [[ -f "$p" ]]; then EXE="$p"; break; fi
           done
           test -n "$EXE"
-          mkdir -p build-portable/HackRFT2Viewer-Portable-1.4.2-RC1
-          cp "$EXE" build-portable/HackRFT2Viewer-Portable-1.4.2-RC1/HackRFT2Viewer.exe
+          mkdir -p build-portable/HackRFT2Viewer-Portable-1.4.2-RC2
+          cp "$EXE" build-portable/HackRFT2Viewer-Portable-1.4.2-RC2/HackRFT2Viewer.exe
           "$QMAKE" HackRFT2Viewer.pro CONFIG+=release CONFIG+=gui_iq_test
           /mingw64/bin/mingw32-make.exe -j2
-          cp release/GuiIqReplayTest.exe build-portable/HackRFT2Viewer-Portable-1.4.2-RC1/
+          cp release/GuiIqReplayTest.exe build-portable/HackRFT2Viewer-Portable-1.4.2-RC2/
 
       - name: Deploy Qt runtime
         run: |
           set -euxo pipefail
-          DIST=build-portable/HackRFT2Viewer-Portable-1.4.2-RC1
+          DIST=build-portable/HackRFT2Viewer-Portable-1.4.2-RC2
           WINDEPLOYQT="$(command -v windeployqt-qt5 || command -v windeployqt)"
           echo "Using windeployqt: $WINDEPLOYQT"
           "$WINDEPLOYQT" --release --no-translations "$DIST/HackRFT2Viewer.exe"
@@ -120,7 +120,7 @@ jobs:
       - name: Collect all MinGW runtime DLL dependencies
         run: |
           set -euxo pipefail
-          DIST=build-portable/HackRFT2Viewer-Portable-1.4.2-RC1
+          DIST=build-portable/HackRFT2Viewer-Portable-1.4.2-RC2
           MINGW_BIN_WIN="$(cygpath -w /mingw64/bin)"
           NTLDD=/mingw64/bin/ntldd.exe
 
@@ -157,7 +157,7 @@ jobs:
       - name: Add docs and licenses
         run: |
           set -euxo pipefail
-          DIST=build-portable/HackRFT2Viewer-Portable-1.4.2-RC1
+          DIST=build-portable/HackRFT2Viewer-Portable-1.4.2-RC2
           for f in README-RU.md VALIDATION.md CHANGELOG.md DIAGNOSTIC-RUN-RU.txt THIRD-PARTY-NOTICES.md HACKRF-LICENSE.txt COPYING-GPL-3.0.txt; do
             [[ -f "$f" ]] && cp "$f" "$DIST/"
           done
@@ -187,7 +187,7 @@ jobs:
           $src = Join-Path $tmp 'vlc-3.0.23'
           if (-not (Test-Path $src)) { throw "VLC directory not found after extraction: $src" }
 
-          $dst = Join-Path $PWD 'build-portable/HackRFT2Viewer-Portable-1.4.2-RC1/vlc'
+          $dst = Join-Path $PWD 'build-portable/HackRFT2Viewer-Portable-1.4.2-RC2/vlc'
           Copy-Item -Recurse -Force $src $dst
 
       - name: Download independently verified RF fixture
@@ -201,7 +201,7 @@ jobs:
         timeout-minutes: 3
         run: |
           $ErrorActionPreference = 'Stop'
-          $dist = (Resolve-Path 'build-portable/HackRFT2Viewer-Portable-1.4.2-RC1').Path
+          $dist = (Resolve-Path 'build-portable/HackRFT2Viewer-Portable-1.4.2-RC2').Path
           $fixture = (Resolve-Path 'windows-rf-fixture').Path
           $output = Join-Path $fixture 'windows-output.ts'
           # Resolve libraries exclusively from the portable folder and Windows.
@@ -226,19 +226,19 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $base = Join-Path $PWD 'build-portable'
-          $dir = Join-Path $base 'HackRFT2Viewer-Portable-1.4.2-RC1'
-          $zip = Join-Path $base 'HackRFT2Viewer-Portable-1.4.2-RC1.zip'
+          $dir = Join-Path $base 'HackRFT2Viewer-Portable-1.4.2-RC2'
+          $zip = Join-Path $base 'HackRFT2Viewer-Portable-1.4.2-RC2.zip'
           Compress-Archive -Path $dir -DestinationPath $zip -CompressionLevel Optimal -Force
           $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
-          "$hash  HackRFT2Viewer-Portable-1.4.2-RC1.zip" | Set-Content -Encoding ascii (Join-Path $base 'SHA256-1.4.2-RC1.txt')
+          "$hash  HackRFT2Viewer-Portable-1.4.2-RC2.zip" | Set-Content -Encoding ascii (Join-Path $base 'SHA256-1.4.2-RC2.txt')
           Get-Item $zip | Format-List FullName,Length
-          Get-Content (Join-Path $base 'SHA256-1.4.2-RC1.txt')
+          Get-Content (Join-Path $base 'SHA256-1.4.2-RC2.txt')
 
       - name: Upload portable artifact
         uses: actions/upload-artifact@v7
         with:
-          name: HackRFT2Viewer-Portable-1.4.2-RC1
+          name: HackRFT2Viewer-Portable-1.4.2-RC2
           path: |
-            build-portable/HackRFT2Viewer-Portable-1.4.2-RC1.zip
-            build-portable/SHA256-1.4.2-RC1.txt
+            build-portable/HackRFT2Viewer-Portable-1.4.2-RC2.zip
+            build-portable/SHA256-1.4.2-RC2.txt
           if-no-files-found: error

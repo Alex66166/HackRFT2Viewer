@@ -229,22 +229,8 @@ bool p1_symbol::demodulate(complex* _p1, dvbt2_parameters &_dvbt2)
         data[idx_data] = static_cast<uint8_t>((data[idx_data] << 1) + bit[i]);
         ++next_bit;
     }
-    uint8_t s1 = 0;
-    uint8_t check_data_s1 = data[0];
-    for(int i = 0; i < 8; ++i) {
-
-        if(data[i] != data[i + 40]) return false;
-
-        if(check_data_s1 == s1_patterns[i][0]) s1 = static_cast<uint8_t>(i);
-    }
-    uint8_t s2 = 0;
-    uint8_t check_data_s2_1 = data[8];
-    uint8_t check_data_s2_2 = data[9];
-    for(int i = 0; i < 16; ++i) {
-        if(check_data_s2_1 == s2_patterns[i][0] && check_data_s2_2 == s2_patterns[i][1]) {
-            s2 = static_cast<uint8_t>(i);
-        }
-    }
+    uint8_t s1 = 0, s2 = 0;
+    if(!decode_signalling(data, s1, s2)) return false;
     switch (s1) {
     case 0:
         _dvbt2.preamble = T2_SISO;
@@ -310,6 +296,37 @@ bool p1_symbol::demodulate(complex* _p1, dvbt2_parameters &_dvbt2)
 
     return true;
 
+}
+//-------------------------------------------------------------------------------------------
+// P1 protects S1 with two 64-bit sequences and S2 with a 256-bit
+// sequence. Comparing only the first bytes, or requiring identical S1
+// copies, discards usable preambles after even a single received bit error.
+// Table distances are at least 64 (both S1 copies) and 128 (S2). Conservative
+// radii 16/32 stay strictly below half-distance, so accepted matches are unique.
+bool p1_symbol::decode_signalling(const uint8_t *data, uint8_t &s1, uint8_t &s2) const
+{
+    const auto weight=[](uint8_t value) {
+        int count=0;
+        while(value){value=uint8_t(value & (value-1));++count;}
+        return count;
+    };
+    int bestS1=129, bestS2=257;
+    for(int candidate=0;candidate<8;++candidate){
+        int distance=0;
+        for(int byte=0;byte<8;++byte){
+            distance+=weight(uint8_t(data[byte]^s1_patterns[candidate][byte]));
+            distance+=weight(uint8_t(data[40+byte]^s1_patterns[candidate][byte]));
+        }
+        if(distance<bestS1){bestS1=distance;s1=uint8_t(candidate);}
+    }
+    if(bestS1>16)return false;
+    for(int candidate=0;candidate<16;++candidate){
+        int distance=0;
+        for(int byte=0;byte<32;++byte)
+            distance+=weight(uint8_t(data[8+byte]^s2_patterns[candidate][byte]));
+        if(distance<bestS2){bestS2=distance;s2=uint8_t(candidate);}
+    }
+    return bestS2<=32;
 }
 //-------------------------------------------------------------------------------------------
 void p1_symbol::reset_buffer()

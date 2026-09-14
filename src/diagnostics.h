@@ -18,7 +18,7 @@
 #define HACKRFT2_GIT_COMMIT "unrecorded-local-build"
 #endif
 namespace Diagnostics {
-inline const char *version() { return "1.4.2-RC1"; }
+inline const char *version() { return "1.4.2-RC2"; }
 inline QString sessionDir()
 {
     static const QString path = [] {

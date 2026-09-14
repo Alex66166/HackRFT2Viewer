@@ -5,6 +5,8 @@
 #include <QMetaObject>
 #include <QElapsedTimer>
 #include <QFileInfo>
+#include <chrono>
+#include <thread>
 #include "rx_hackrf_pro.h"
 #include "diagnostics.h"
 class ReceiverRegressionTest {
@@ -28,12 +30,18 @@ public:
         QObject::connect(bb,&bb_de_header::services_changed,[](QStringList s,QList<int>){qInfo()<<"SERVICES"<<s;});
         QMetaObject::invokeMethod(bb,[&]{bb->set_network_output(false,7654);bb->set_recording(true,output);},Qt::BlockingQueuedConnection);
         rx.m_running.store(true);rx.m_metricsTimer.start();rx.m_settleSamples=0;
+        const bool realtime=qEnvironmentVariableIsSet("REALTIME_REPLAY");
+        const auto started=std::chrono::steady_clock::now();
         QElapsedTimer clock;clock.start();qint64 bytes=0;
         while(!input.atEnd()) {
-            const auto block=input.read(262144);if(block.isEmpty())break;bytes+=block.size();
+            const auto block=input.read(262144);if(block.isEmpty())break;
+            if(realtime)std::this_thread::sleep_until(started+std::chrono::nanoseconds(qint64(bytes*5e8/rate)));
+            bytes+=block.size();
             rx.processSamples(reinterpret_cast<const uint8_t*>(block.constData()),block.size());
-            QMetaObject::invokeMethod(demod,[]{},Qt::BlockingQueuedConnection);QCoreApplication::processEvents();
+            if(!realtime)QMetaObject::invokeMethod(demod,[]{},Qt::BlockingQueuedConnection);
+            QCoreApplication::processEvents();
         }
+        QMetaObject::invokeMethod(demod,[]{},Qt::BlockingQueuedConnection);
         QMetaObject::invokeMethod(ti,[]{},Qt::BlockingQueuedConnection);
         QMetaObject::invokeMethod(qam,[&]{qam->flushPending();},Qt::BlockingQueuedConnection);
         for(QObject *stage:{static_cast<QObject*>(ldpc),static_cast<QObject*>(bch),static_cast<QObject*>(bb)})
@@ -41,11 +49,12 @@ public:
         QMetaObject::invokeMethod(bb,[&]{bb->set_recording(false,QString());metrics=bb->snapshotMetrics();},Qt::BlockingQueuedConnection);
         const qint64 tsBytes=QFileInfo(output).size();
         qInfo()<<"RESULT bytes"<<bytes<<"sample_rate"<<rate<<"input_ms"<<bytes*500.0/rate
-               <<"elapsed_ms"<<clock.elapsed()<<"drops"<<rx.m_queueDrops.load()
+               <<"elapsed_ms"<<clock.elapsed()<<"realtime"<<realtime<<"drops"<<rx.m_queueDrops.load()
                <<"P1/L1pre/L1post"<<demod->p1Matches<<demod->l1PreMatches<<demod->l1PostMatches
                <<"CP coherence/repeatability_dB/residual_Hz"<<demod->guardCoherence<<demod->guardRepeatabilityDb<<demod->residualFrequencyHz
                <<"BCH total/failed"<<metrics.bchFrames<<metrics.bchFailedFrames<<"TSbytes"<<tsBytes;
-        rx.stop();return tsBytes>0?0:3;
+        const bool dropped=rx.m_queueDrops.load()!=0;
+        rx.stop();return dropped?4:tsBytes>0?0:3;
     }
 };
 int main(int argc,char **argv){

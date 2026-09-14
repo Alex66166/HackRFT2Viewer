@@ -1,4 +1,4 @@
-# Validation — 1.4.2-RC1
+# Validation — 1.4.2-RC2
 
 This is a diagnostic release candidate, not a confirmed working broadcast receiver.
 
@@ -234,3 +234,61 @@ HackRF recording it detected P1 but delivered no valid L1-post frames and
 zero TS bytes. This comparison does not establish the cause of the supplied
 recording's failure; it establishes that this fork is not a verified drop-in
 solution for it. No decoder changes from that fork were copied into this app.
+
+
+## RC2: P1 correction and bounded BCH work (2026-09-14)
+
+A matched-filter timing check found 12 regularly spaced P1 preambles in the
+supplied recording (approximately 243.9358 ms apart). The receiver detected
+all candidates but accepted only 6: it demanded identical S1 copies and used
+only a short prefix to identify the S1/S2 sequences. This was a software defect.
+The new decoder compares all 128 received S1 bits and all 256 S2 bits against
+the existing standard codebooks. Acceptance radii 16 and 32 are strictly below
+half the codebooks' minimum distances (64 and 128), giving unique matches.
+The upstream fork's full-codeword decoding helped identify this missing step;
+this app uses its own conservative bounded-distance implementation.
+
+P1 tests cover all 128 S1/S2 combinations, errors up to both acceptance limits,
+rejection beyond those limits, matching-prefix/invalid-tail candidates,
+2,000 random candidates and a damaged modulated P1 waveform.
+
+Accepting the previously missed frames exposed a BCH bottleneck on consistently
+bad payloads: exhaustive Chien searches took about 3 ms per failed word. Before
+that search, RC2 checks whether the error-locator polynomial divides
+`x^(2^m)-x`, using modular squaring in the same finite field. A locator with
+`degree` distinct field roots must satisfy this identity. Non-splitting
+locators cannot be repaired by the subsequent Chien search and are rejected
+without scanning every field element. Accepted locators still undergo root,
+magnitude and final syndrome checks; LDPC-failed words still reach BCH.
+P1, BCH and P2 regression suites also pass with ASan/UBSan.
+The precheck is tested against exhaustive Chien search in both fields,
+including non-monic and repeated-root polynomials. All 12 FEC/rate combinations
+still correct 0 through their BCH capacity and reject the tested excess errors.
+
+Local release results:
+
+| Recording / mode | P1 / L1-pre / L1-post | BCH accepted / total | TS bytes | Queue drops |
+| --- | --- | --- | --- | --- |
+| Supplied recording, offline | 12 / 11 / 11 | 0 / 1440 | 0 | 0 |
+| Supplied recording, paced 10 MS/s | 12 / 11 / 11 | 0 / 1440 | 0 | 0 |
+| Independent GNU Radio, 20 dB | 5 / 5 / 5 | 432 / 432 | 2799508 | 0 |
+| Synthetic 12-frame real-time stress | 12 / 12 / 12 | 1188 / 1188 | 7593696 | 0 |
+
+The supplied 2.8908544-second recording took 1.924 seconds offline, compared
+with 4.780 seconds after P1 correction but before the BCH precheck. At real-time
+pacing it took 2.980 seconds including the final pipeline drain, with zero
+queue drops. These are measurements on this Linux host, not a guarantee for
+every PC. The independent TS contains 14,891 exact source packets with no gaps.
+The synthetic stress test also compares every output byte.
+
+To reproduce paced input, set `REALTIME_REPLAY=1` when running `iq_replay_test`.
+It returns 3 for no TS and 4 for queue drops; offline mode remains the default.
+The test deliberately does not wait for DSP after each input block in paced
+mode. An explicit final drain ensures pending work is included in the result.
+
+The previous commit 59c1f76 additionally passed the packaged Windows GUI gate:
+2,799,508 exact TS bytes, SHA-256
+`0012e7a9bc394b503ee92c9f1a1ed06bc08792c5dd9a14b868eb1bfc9e19b46e`.
+Each RC2 Actions run repeats that same gate before publishing its portable ZIP.
+The supplied real-world recording still produces no TS. Corrected acquisition
+and demonstrated queue throughput do not resolve that remaining FEC failure.

@@ -80,6 +80,7 @@ private:
     void init_p1_randomize();
     complex p1_dbpsk[P1_ACTIVE_CARRIERS];
     bool demodulate(complex *_p1, dvbt2_parameters &_dvbt2);
+    bool decode_signalling(const uint8_t *data, uint8_t &s1, uint8_t &s2) const;
     void reset_buffer();
 
     const int p1_active_carriers[P1_ACTIVE_CARRIERS] =

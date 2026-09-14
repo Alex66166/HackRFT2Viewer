@@ -23,6 +23,7 @@
 
 #include <cassert>
 #include <iostream>
+#include <array>
 
 namespace CODE {
   namespace RS {
@@ -87,6 +88,33 @@ namespace CODE {
       typedef typename GF::ValueType ValueType;
       typedef typename GF::IndexType IndexType;
       ArtinSchreier<GF> imap;
+      // A correctable locator must have degree distinct roots in GF(2^m).
+      // Such polynomials divide x^(2^m)-x. Check that identity with m modular
+      // squarings before scanning every field element. Random uncorrectable
+      // words almost never pass; correctable words still use the exact root
+      // search and the caller's magnitude/syndrome verification.
+      static bool splits_completely(const ValueType *locator, int degree)
+      {
+        assert(degree > 2 && degree <= NR);
+        std::array<ValueType, NR> monic, remainder;
+        remainder.fill(ValueType(0));
+        for(int i=0;i<degree;++i)monic[i]=locator[i]/locator[degree];
+        remainder[1]=ValueType(1);
+        for(int round=0;round<GF::M;++round){
+          std::array<ValueType, 2*NR> square;
+          square.fill(ValueType(0));
+          for(int i=0;i<degree;++i)square[2*i]=remainder[i]*remainder[i];
+          for(int i=2*degree-2;i>=degree;--i){
+            const ValueType factor=square[i];
+            if(factor)for(int j=0;j<degree;++j)
+              square[i-degree+j]+=factor*monic[j];
+          }
+          for(int i=0;i<degree;++i)remainder[i]=square[i];
+        }
+        for(int i=0;i<degree;++i)
+          if(remainder[i]!=ValueType(i==1?1:0))return false;
+        return true;
+      }
       int
       operator()(ValueType *locator, int locator_degree, IndexType *locations)
       {
@@ -107,6 +135,7 @@ namespace CODE {
           locations[1] = index(ba * R + ba) / IndexType(1);
           return 2;
         }
+        if(!splits_completely(locator, locator_degree))return 0;
         return Chien<NR, GF>::search(locator, locator_degree, locations);
       }
     };
