@@ -120,6 +120,7 @@ private:
     void drainBlocks();
     void clearBlockQueue();
     void resetPipeline();
+    static const char *stageProfileHeader();
     void updateFromDemodulator();
     bool reportResult(int result, const QString &operation);
 

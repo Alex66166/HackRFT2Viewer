@@ -15,6 +15,7 @@
 #include "dvbt2_demodulator.h"
 #include "DSP/complex_rotator.h"
 #include "DSP/guard_acquisition.h"
+#include "async_pipeline_payload.h"
 
 #include <immintrin.h>
 #include <chrono>
@@ -78,7 +79,19 @@ dvbt2_demodulator::dvbt2_demodulator(float _level_min, float _sample_rate, QObje
     thread = new QThread;
     thread->setObjectName("time_deinterleaver");
     deinterleaver->moveToThread(thread);
-    connect(this, &dvbt2_demodulator::data, deinterleaver, &time_deinterleaver::execute, Qt::BlockingQueuedConnection);
+    // A blocking cross-thread hand-off for every OFDM symbol makes the input
+    // thread pay scheduler latency hundreds of times per second. Keep a small
+    // bounded queue; only genuine downstream backpressure can stop the producer.
+    const auto symbolSlots=std::make_shared<QSemaphore>(16);
+    connect(this, &dvbt2_demodulator::data, deinterleaver,
+            [receiver=deinterleaver,symbolSlots](int count,complex *source) {
+        if(count<=0 || !source)return;
+        auto permit=acquire_async_queue_slot(symbolSlots);
+        auto cells=std::make_shared<std::vector<complex>>(source,source+count);
+        QMetaObject::invokeMethod(receiver,[receiver,cells,permit,symbolSlots] {
+            receiver->execute(int(cells->size()),cells->data());
+        },Qt::QueuedConnection);
+    },Qt::DirectConnection);
     connect(this, &dvbt2_demodulator::l1_dyn_execute, deinterleaver, &time_deinterleaver::l1_dyn_execute, Qt::BlockingQueuedConnection);
 //    thread->start(QThread::TimeCriticalPriority);
     connect(thread, &QThread::finished, deinterleaver, &QObject::deleteLater);

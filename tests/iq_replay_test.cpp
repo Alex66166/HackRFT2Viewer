@@ -30,6 +30,10 @@ public:
         QObject::connect(bb,&bb_de_header::services_changed,[](QStringList s,QList<int>){qInfo()<<"SERVICES"<<s;});
         QMetaObject::invokeMethod(bb,[&]{bb->set_network_output(false,7654);bb->set_recording(true,output);},Qt::BlockingQueuedConnection);
         rx.m_running.store(true);rx.m_metricsTimer.start();rx.m_settleSamples=0;
+        rx.m_stageProfilePath=output+QStringLiteral(".profile.csv");
+        rx.m_stageProfileFile.setFileName(rx.m_stageProfilePath);
+        if(!rx.m_stageProfileFile.open(QIODevice::WriteOnly|QIODevice::Text))return 2;
+        rx.m_stageProfileFile.write(rx.stageProfileHeader());
         const bool realtime=qEnvironmentVariableIsSet("REALTIME_REPLAY");
         const auto started=std::chrono::steady_clock::now();
         QElapsedTimer clock;clock.start();qint64 bytes=0;

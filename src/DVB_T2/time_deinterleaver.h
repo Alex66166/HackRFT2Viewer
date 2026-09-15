@@ -22,6 +22,7 @@
 #include "DSP/fast_fourier_transform.h"
 #include "dvbt2_definition.h"
 #include "llr_demapper.h"
+#include "async_pipeline_payload.h"
 
 class time_deinterleaver : public QObject
 {
@@ -54,6 +55,7 @@ private:
     dvbt2_parameters dvbt2;
     l1_presignalling l1_pre;
     l1_postsignalling l1_post;
+    std::shared_ptr<owned_l1_post> l1_post_owner;
     bool flag_start = false;
     int p2_start_idx_cell;
     int num_plp;                            // PLP to decode in the receiver

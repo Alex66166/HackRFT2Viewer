@@ -78,6 +78,11 @@ public:
     {
         semaphore_->acquire(1);
     }
+    explicit async_queue_permit(std::shared_ptr<QSemaphore> semaphore)
+        : owner_(std::move(semaphore)), semaphore_(owner_.get())
+    {
+        semaphore_->acquire(1);
+    }
 
     ~async_queue_permit()
     {
@@ -89,12 +94,17 @@ public:
     async_queue_permit &operator=(const async_queue_permit &) = delete;
 
 private:
+    std::shared_ptr<QSemaphore> owner_;
     QSemaphore *semaphore_ = nullptr;
 };
 
 inline std::shared_ptr<async_queue_permit> acquire_async_queue_slot(QSemaphore &semaphore)
 {
     return std::make_shared<async_queue_permit>(semaphore);
+}
+inline std::shared_ptr<async_queue_permit> acquire_async_queue_slot(std::shared_ptr<QSemaphore> semaphore)
+{
+    return std::make_shared<async_queue_permit>(std::move(semaphore));
 }
 
 #endif // ASYNC_PIPELINE_PAYLOAD_H

@@ -75,7 +75,8 @@ void time_deinterleaver::start(dvbt2_parameters _dvbt2, l1_presignalling _l1_pre
 {
     dvbt2 = _dvbt2;
     l1_pre = _l1_pre;
-    l1_post = _l1_post;
+    l1_post_owner=std::make_shared<owned_l1_post>(_l1_post);
+    l1_post = l1_post_owner->value;
     p2_start_idx_cell = L1_PRE_CELL + l1_pre.l1_post_size;
     num_plp = l1_post.num_plp;
     fec_len_bits = new int[num_plp];
@@ -278,7 +279,10 @@ void time_deinterleaver::address_cell_deinterleaving(int _num_fec_block_max, int
 void time_deinterleaver::l1_dyn_execute(l1_postsignalling _l1_post, int _len_in, complex* _ofdm_cell)
 {
     // dynamic l1 post signaling
-    l1_post = _l1_post;
+    // P2 may already be parsing the next frame while queued data symbols
+    // are still using this frame's PLP configuration and slice boundaries.
+    l1_post_owner=std::make_shared<owned_l1_post>(_l1_post);
+    l1_post = l1_post_owner->value;
     for(int i = 0; i < num_plp; ++i){
         slice_end[i] = l1_post.dyn.plp[i].start + l1_post.dyn.plp[i].num_blocks *
                         cells_per_fec_block[i] / p_i[i] - 1;

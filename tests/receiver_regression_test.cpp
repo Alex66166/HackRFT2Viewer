@@ -3,12 +3,34 @@
 #include "rx_hackrf_pro.h"
 #include <QMutex>
 #include <QMetaObject>
+#include <thread>
 class ReceiverRegressionTest {
 public:
  static void run(){
   iq_correct<int8_t> iq(7,.04f,.02f);std::vector<int8_t> zero(2048),nonzero(2048,12);std::vector<complex> corrected(1024);int gain=0;
   iq.execute(size_t(1024),zero.data(),corrected.data(),gain);iq.execute(size_t(1024),nonzero.data(),corrected.data(),gain);
   for(auto c:corrected)assert(std::isfinite(c.real())&&std::isfinite(c.imag()));
+  {
+   // Compare the branch-free path to the original scalar equations, across
+   // block boundaries with random signs, full ADC range, DC and zero input.
+   iq_correct<int8_t> fast(7,.04f,.02f);complex dc{};float c1=0,c2=1;
+   std::mt19937 rng(755);std::vector<int8_t> input(4094);std::vector<complex> output(2047);
+   for(int block=0;block<30;++block){
+    for(auto &v:input)v=block%5?int8_t(rng()):0;
+    fast.execute(output.size(),input.data(),output.data(),gain);
+    float t1=0,t2=0,t3=0;
+    for(int i=0;i<int(output.size());++i){
+     complex x(input[2*i]/128.f,input[2*i+1]/128.f);dc=dc+1e-5f*(x-dc);x-=dc;
+     const float signI=x.real()<0?-1.f:1.f,signQ=x.imag()<0?-1.f:1.f;
+     t1-=x.imag()*signI;t2+=x.real()*signI;t3+=x.imag()*signQ;
+     const float real=x.real()*c2;assert(std::abs(output[i]-complex(real,x.imag()+c1*real))<1e-7f);
+    }
+    if(t2<=1e-12f || t3<=1e-12f){c1=0;c2=1;continue;}
+    c1=t1/t2;float ratio=t3/t2,variance=ratio*ratio-c1*c1;
+    if(!std::isfinite(variance)||variance<=0){c1=0;c2=1;}else c2=std::sqrt(variance);
+   }
+   qInfo()<<"Branch-free I/Q correction matches scalar reference across blocks PASS";
+  }
   for(double rate:{8000000.,10000000.,12500000.,16000000.,20000000.}){
    HackRfSettings settings;settings.sampleRateHz=rate;RxHackRfPro rx(settings);p1_symbol p;auto reference=P1AcquisitionTest::waveform(p,.1f);
    int count=int(reference.size()*rate/SAMPLE_RATE);QByteArray bytes(count*2,0);
@@ -40,6 +62,34 @@ public:
    qInfo()<<"Bounded queue sheds 24 stale blocks and drains remaining 16 PASS";
   }
   QMutex mutex;
+  {
+   // Pause the real TI worker: sixteen symbols may queue without blocking
+   // the input thread, but a seventeenth must wait. Poison the producer's
+   // buffer immediately after each hand-off to verify sample ownership.
+   dvbt2_demodulator demod(.02f,1e7f);auto *ti=demod.deinterleaver;
+   l1_postsignalling_plp plp;plp.id=17;plp.plp_num_blocks_max=1;plp.time_il_length=1;plp.frame_interval=1;
+   dynamic_plp dyn;dyn.id=17;dyn.num_blocks=1;l1_postsignalling post;post.num_plp=1;post.plp=&plp;post.dyn.plp=&dyn;
+   QMetaObject::invokeMethod(ti,[&]{ti->start(dvbt2_parameters{},l1_presignalling{},post);ti->l1_dyn_execute(post,0,nullptr);},Qt::BlockingQueuedConnection);
+   plp.id=99; // The active TI frame must retain its own L1 metadata.
+   bool delivered=false;
+   QObject::connect(ti,&time_deinterleaver::ti_block,ti,[&](int n,complex *data,int,l1_postsignalling copy){
+    assert(copy.plp[0].id==17 && n==8100);
+    for(int i=0;i<n;++i)assert(data[i]==complex(1,2));delivered=true;
+   },Qt::DirectConnection);
+   QSemaphore entered,release,sixteen,completed;
+   QMetaObject::invokeMethod(ti,[&]{entered.release();release.acquire();},Qt::QueuedConnection);entered.acquire();
+   std::thread producer([&]{
+    std::vector<complex> cells(1000);
+    for(int i=0;i<17;++i){std::fill(cells.begin(),cells.end(),complex(1,2));emit demod.data(cells.size(),cells.data());std::fill(cells.begin(),cells.end(),complex(-99,-77));if(i==15)sixteen.release();}
+    completed.release();
+   });
+   const bool queued=sixteen.tryAcquire(1,5000);
+   const bool overflow=completed.tryAcquire(1,50);
+   release.release();producer.join();
+   QMetaObject::invokeMethod(ti,[]{},Qt::BlockingQueuedConnection);
+   assert(queued && !overflow && delivered);
+   qInfo()<<"Owned OFDM symbols / 16-symbol bound / backpressure / stable L1 metadata PASS";
+  }
   {
    time_deinterleaver ti(&mutex);QObject::disconnect(&ti,&time_deinterleaver::ti_block,ti.qam,&llr_demapper::execute);
    l1_postsignalling_plp plp;plp.id=17;plp.plp_num_blocks_max=1;plp.time_il_length=1;plp.frame_interval=1;

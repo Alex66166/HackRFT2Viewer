@@ -9,8 +9,13 @@
 #include <QMutexLocker>
 #include <QStandardPaths>
 #include <QSysInfo>
+#include <QThread>
 #include <QUuid>
 #include <cstdio>
+#if defined(__GNUC__) && (defined(__i386__) || defined(__x86_64__))
+#include <cpuid.h>
+#include <cstring>
+#endif
 
 #if __has_include("build_revision.h")
 #include "build_revision.h"
@@ -18,7 +23,7 @@
 #define HACKRFT2_GIT_COMMIT "unrecorded-local-build"
 #endif
 namespace Diagnostics {
-inline const char *version() { return "1.4.2-RC2"; }
+inline const char *version() { return "1.4.2-RC3"; }
 inline QString sessionDir()
 {
     static const QString path = [] {
@@ -42,6 +47,32 @@ inline QString filePath(const QString &name)
 {
     const QString dir = sessionDir();
     return dir.isEmpty() ? QString() : QDir(dir).filePath(name);
+}
+inline QString textTail(const QString &path, bool csv=false, qint64 limit=128*1024)
+{
+    QFile file(path);
+    if(!file.open(QIODevice::ReadOnly))return QStringLiteral("[Unable to read file]\n");
+    QByteArray header;
+    if(csv)header=file.readLine(8192);
+    if(file.size()<=limit){file.seek(0);return QString::fromUtf8(file.readAll());}
+    file.seek(file.size()-limit);
+    file.readLine(); // Drop a partial row/UTF-8 sequence at the tail boundary.
+    return QString::fromUtf8(header)+QString::fromUtf8(file.readAll());
+}
+inline QString cpuDescription()
+{
+#if defined(__GNUC__) && (defined(__i386__) || defined(__x86_64__))
+    unsigned a,b,c,d;
+    if(__get_cpuid_max(0x80000000,nullptr)>=0x80000004){
+        char brand[49]{};
+        for(unsigned i=0;i<3;++i){
+            __cpuid(0x80000002+i,a,b,c,d);
+            const unsigned words[]={a,b,c,d};std::memcpy(brand+16*i,words,16);
+        }
+        return QString::fromLatin1(brand).trimmed();
+    }
+#endif
+    return QSysInfo::currentCpuArchitecture();
 }
 inline void appendBounded(const QString &path, const QByteArray &line, qint64 limit = 4 * 1024 * 1024)
 {
@@ -68,7 +99,8 @@ inline QString environment()
 {
     return QStringLiteral("Version: %1\nCommit: %8\nBuilt: %2 %3\nOS: %4\nArchitecture: %5\nQt: %6\nDiagnostic session: %7\n")
         .arg(QString::fromLatin1(version()), QStringLiteral(__DATE__), QStringLiteral(__TIME__),
-             QSysInfo::prettyProductName(), QSysInfo::currentCpuArchitecture(), QString::fromLatin1(qVersion()), sessionDir(), QString::fromLatin1(HACKRFT2_GIT_COMMIT));
+             QSysInfo::prettyProductName(), QSysInfo::currentCpuArchitecture(), QString::fromLatin1(qVersion()), sessionDir(), QString::fromLatin1(HACKRFT2_GIT_COMMIT))
+        + QStringLiteral("CPU: %1\nLogical processors: %2\n").arg(cpuDescription()).arg(QThread::idealThreadCount());
 }
 }
 #endif

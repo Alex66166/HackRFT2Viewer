@@ -793,7 +793,9 @@ void MainWindow::updateGainAdvice()
     QString text;
     QString styleName;
     if(m_radioMetrics.droppedLastInterval || m_radioMetrics.backlog>18){
-        text=QStringLiteral("Потери I/Q: DSP не успевает. На 8 MS/s это уже не проблема USB/усиления; закройте тяжёлые программы. Очередь автоматически сбрасывает устаревшие блоки.");
+        text=QStringLiteral("Потери I/Q: обработка %1 MS/s при входных %2 MS/s. Поток прерывается, синхронизация восстанавливается. Замеры каждого этапа включаются в диагностический отчёт.")
+            .arg(m_radioMetrics.dspMegaSamplesPerSecond,0,'f',2)
+            .arg(m_radioMetrics.usbMegaSamplesPerSecond,0,'f',2);
         styleName=QStringLiteral("adviceBad");
     } else if(m_radioMetrics.clipPercent > 0.02 || m_radioMetrics.peakDbfs > -0.3) {
         text = QStringLiteral("Перегрузка АЦП: сначала выключите RF AMP, затем уменьшайте LNA и VGA примерно поровну.");
@@ -967,12 +969,9 @@ void MainWindow::exportDiagnostics()
         for(const auto &entry : QDir(session).entryInfoList(QDir::Files)) {
             if(!QFile::copy(entry.absoluteFilePath(), QDir(bundle).filePath(entry.fileName())))
                 copyErrors << entry.fileName();
-            if(entry.suffix() == QStringLiteral("log")) {
-                QFile log(entry.absoluteFilePath());
-                if(log.open(QIODevice::ReadOnly)) {
-                    log.seek(qMax(qint64(0), log.size() - 256 * 1024));
-                    out << "\n--- " << entry.fileName() << " (tail) ---\n" << QString::fromUtf8(log.readAll());
-                }
+            if(entry.suffix() == QStringLiteral("log") || entry.suffix() == QStringLiteral("csv")) {
+                out << "\n--- " << entry.fileName() << " (tail) ---\n"
+                    << Diagnostics::textTail(entry.absoluteFilePath(),entry.suffix()==QStringLiteral("csv"));
             }
         }
         out << "\nAttached files: " << bundle << "\n";

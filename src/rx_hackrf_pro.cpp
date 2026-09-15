@@ -222,6 +222,14 @@ void RxHackRfPro::stop()
     if(m_hackrfInitialized){hackrf_exit();m_hackrfInitialized=false;}
     if(running)emit runningChanged(false);
 }
+const char *RxHackRfPro::stageProfileHeader()
+{
+    return "elapsed_ms,input_samples,blocks,usb_msps,processed_msps,backlog,drops,drops_interval,"
+                   "frontend_stats_ms,iq_correct_ms,coarse_rotate_ms,demod_outer_ms,spectrum_ms,"
+                   "demod_input_rotate_ms,resampler_ms,symbol_acquire_ms,p1_ms,guard_ms,fft_ms,p2_ms,"
+                   "data_demod_ms,fc_demod_ms,downstream_data_wait_ms,downstream_control_wait_ms,"
+                   "p1_calls,fft_calls,p2_calls,data_calls,fc_calls,p1_matches,p2_attempts,l1_pre,l1_post,l1_pre_errors,cp_quality_symbols,cp_coherence,cp_repeatability_db,residual_carrier_hz\n";
+}
 void RxHackRfPro::resetPipeline()
 {
     clearBlockQueue();
@@ -239,11 +247,7 @@ void RxHackRfPro::resetPipeline()
         m_stageProfileFile.setFileName(m_stageProfilePath);
         if(m_stageProfileFile.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Append)) {
             QTextStream out(&m_stageProfileFile);out.setCodec("UTF-8");
-            if(m_stageProfileFile.size() == 0) out << "elapsed_ms,input_samples,blocks,usb_msps,processed_msps,backlog,drops,drops_interval,"
-                   "frontend_stats_ms,iq_correct_ms,coarse_rotate_ms,demod_outer_ms,spectrum_ms,"
-                   "demod_input_rotate_ms,resampler_ms,symbol_acquire_ms,p1_ms,guard_ms,fft_ms,p2_ms,"
-                   "data_demod_ms,fc_demod_ms,downstream_data_wait_ms,downstream_control_wait_ms,"
-                   "p1_calls,fft_calls,p2_calls,data_calls,fc_calls,p1_matches,p2_attempts,l1_pre,l1_post,l1_pre_errors,cp_quality_symbols,cp_coherence,cp_repeatability_db,residual_carrier_hz\n";
+            if(m_stageProfileFile.size() == 0) out << stageProfileHeader();
             out.flush();
             emit receiverStage(QStringLiteral("Внутренний профиль DSP: %1").arg(m_stageProfilePath));
         }

@@ -1,6 +1,63 @@
-# Validation — 1.4.2-RC2
+# Validation — 1.4.2-RC3
 
 This is a diagnostic release candidate, not a confirmed working broadcast receiver.
+
+## 2026-09-15: actual RC2 overload and RC3 changes
+
+The new Windows reports from commit `98de02f` show 10 MS/s USB input,
+about 4–9 MS/s DSP throughput, 3264 dropped buffers and no accepted BCH
+frames. Earlier Linux real-time results do **not** establish that RC2 keeps
+up on this computer. The reports omitted the separate stage CSV files,
+so the exact distribution of input-stage time on that Windows PC is unknown.
+
+RC3 replaces the synchronous per-OFDM-symbol TI hand-off with an owned,
+16-symbol bounded queue. It retains backpressure, chronological L1 frame
+boundaries and independently owned PLP metadata. The queue test pauses the
+actual TI worker: sixteen symbols fit, a seventeenth waits, and poisoning
+the producer's sample buffer / changing its L1 metadata does not corrupt
+received cells. The same 32-tap resampler and FEC iteration budgets remain.
+
+I/Q imbalance estimation uses sign-bit operations instead of unpredictable
+branches; its outputs match the original scalar equations across successive
+random, zero and full-range ADC blocks within 1e-7. On the local AMD EPYC
+microbenchmark, I/Q correction improved from 81.0 to 278.5 MS/s. This is
+one stage, not a claim that the entire application is 3.4 times faster.
+
+The standalone TXT report now embeds bounded tails of stage/FEC CSVs with
+their column headers, as well as the CPU model and logical processor count.
+Overload advice reports measured input/processing rates and no longer
+incorrectly says the receiver is using 8 MS/s or tells the user to close apps.
+
+New supplied 586 MHz recording (60,000,000 bytes, 10 MS/s, 3 seconds):
+P1/L1-pre/L1-post = 12/11/11; BCH = 1528 total, 1528 failed; TS = 0.
+Paced 10 MS/s replay had no dropped buffers on the local machine, taking
+3112 ms including the final asynchronous FEC drain. Offline replay took
+2160 ms. The captured signal is still not decoded successfully.
+
+Independent raw-CS8 prefix/suffix comparison at a 35840-input-sample lag
+(32K FFT at 10 MS/s), before receiver correction/resampling, gives repeated
+sample coherence around 0.78–0.89 on sampled windows of the new file,
+versus roughly 0.95–0.97 on the older file. The receiver's continuous
+measurement ends at 0.8207 / 6.61 dB repeatability. This is not calibrated
+C/N, does not identify the RF cause, and does not prove that every possible
+decoder must fail; it separates input degradation from DSP queue loss.
+
+Release validation:
+- Actual two-PLP profile, 108 + 48 normal rotated-64-QAM 4/5 FEC words,
+  three TI blocks and P2 payload offset 2742: all words match their distinct
+  reference payloads, including PLP IDs across partial SIMD batches.
+- Independent GNU Radio RF fixture: 432/432 accepted BCH frames,
+  14,891 packets / 2,799,508 exact TS bytes; no gaps or duplicates.
+- Full synthetic RF-to-TS: 324/324 accepted BCH frames, zero bit mismatches,
+  2,071,008 exact bytes and no dropped buffers.
+
+GUI replay using the normal file timer also produced the same exact
+2,799,508-byte TS. The ownership/backpressure, I/Q scalar-reference,
+diagnostic export and full-RF regressions passed ASan + UBSan locally
+(leak detection disabled for Qt).
+
+No live HackRF or the user's Windows computer is attached to this runner.
+RC3 remains a diagnostic candidate, not a confirmed cure for that system.
 
 ## Reviewed inputs
 

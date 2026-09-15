@@ -66,12 +66,12 @@ private:
     }
     inline void est_1_bit_quantization(float _real, float _imag)
     {
-        float sgn;
-        sgn = _real < 0 ? -1.0f : 1.0f;
-        theta1 -= _imag * sgn;
-        theta2 += _real * sgn;
-        sgn = _imag < 0 ? -1.0f : 1.0f;
-        theta3 += _imag * sgn;
+        // Random I/Q signs make scalar branches expensive on every sample.
+        // fabs/copysign compile to sign-bit operations. Preserve the original
+        // convention that zero (including -0) has positive sign.
+        theta1 -= _imag * std::copysign(1.0f, _real + 0.0f);
+        theta2 += std::abs(_real);
+        theta3 += std::abs(_imag);
     }
     inline int estimations(int _len)
     {

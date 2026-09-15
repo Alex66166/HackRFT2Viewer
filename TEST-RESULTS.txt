@@ -103,3 +103,15 @@ User IQ paced 10 MS/s: 2980 ms with final drain, drops 0; TS remains 0.
 GNU Radio control: 432/432 BCH, 2799508 exact bytes, 14891 packets, no gaps.
 Synthetic real-time RF: 1188/1188 BCH, 7593696 exact bytes, drops 0.
 59c1f76 Windows packaged GUI gate: PASS, 2799508 exact bytes.
+
+2026-09-15 RC3:
+RC2 Windows user reports still show DSP overload, 3264 drops and TS=0.
+Removed per-symbol blocking TI hand-off; 16 owned symbols max, real
+backpressure and stable L1 metadata. Queue/ownership/scalar-IQ comparison
+and full synthetic RF tests PASS with ASan + UBSan (Qt leak checks off).
+CSV tails with headers and CPU details included directly in TXT reports.
+Two PLPs, 108+48 distinct reference FEC words, P2 offset2742: PASS.
+Independent GNU Radio: 432 accepted FEC, 2799508 exact bytes in CLI and GUI.
+New 60000000-byte user capture: 12/11/11 P1/pre/post, 1528/1528 BCH failed,
+TS=0, no local queue drops. Paced10MS/s replay3112ms including FEC drain.
+The user's live Windows performance and broadcast decoding remain unconfirmed.
