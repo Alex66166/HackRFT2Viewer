@@ -235,6 +235,8 @@ void dvbt2_demodulator::symbol_acquisition(int _len_in, complex* _in, signal_est
             stage_profile.p1Ns += profile_ns(t_p1);
             ++stage_profile.p1Calls;
             if(p1_detected) {
+                ++p1Candidates;
+                if(!p1_decoded) ++p1FailedSignalling;
                 if(p1_decoded) {
                     ++p1Matches;
                     if(dvbt2.preamble!=T2_SISO || (dvbt2.fft_mode!=FFTSIZE_16K && dvbt2.fft_mode!=FFTSIZE_32K && dvbt2.fft_mode!=FFTSIZE_16K_T2GI && dvbt2.fft_mode!=FFTSIZE_32K_T2GI)) {
