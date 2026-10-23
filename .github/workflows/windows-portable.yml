@@ -30,8 +30,8 @@ jobs:
           7z x -y -oreal-iq/raw real-iq/t2.rar
           test "$(du -sb real-iq/raw | cut -f1)" -lt 300000000
           python3 tests/probe_real_iq.py real-iq/raw
-          python3 tests/convert_real_iq.py real-iq/raw/t2/_VV.CPX real-iq/Russia_546MHz_10MSps.cs8
-          file real-iq/Russia_546MHz_10MSps.cs8
+          python3 tests/convert_real_iq.py real-iq/raw/t2/_VV.CPX real-iq/Russia_546MHz_9.142857MSps.cs8
+          file real-iq/Russia_546MHz_9.142857MSps.cs8
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -86,7 +86,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends 7zip
           7z x -y -o"$RUNNER_TEMP/real-rf" "$RUNNER_TEMP/real-rf/t2.rar"
           python3 tests/convert_real_iq.py "$RUNNER_TEMP/real-rf/t2/_VV.CPX" "$RUNNER_TEMP/real-rf/real.cs8"
-          timeout 45 build-native/iq_replay_test "$RUNNER_TEMP/real-rf/real.cs8" "$RUNNER_TEMP/real-rf/recovered.ts" > "$RUNNER_TEMP/real-rf/replay.log" 2>&1
+          timeout 45 build-native/iq_replay_test "$RUNNER_TEMP/real-rf/real.cs8" "$RUNNER_TEMP/real-rf/recovered.ts" 9142857.142857143 > "$RUNNER_TEMP/real-rf/replay.log" 2>&1
           code=$?
           tail -100 "$RUNNER_TEMP/real-rf/replay.log"
           if [ "$code" -eq 4 ]; then echo 'FAIL: unexpected real capture buffer drops'; exit 4; fi
