@@ -3,14 +3,11 @@ on:
   workflow_dispatch:
   pull_request:
     branches: [ main ]
-    paths:
-      - 'tests/probe_real_iq.py'
-      - '.github/workflows/real-iq-sample.yml'
-  push:
-    branches: [ fix/dvbt2-pilot-equalizer-perf ]
-    paths:
-      - 'tests/probe_real_iq.py'
-      - '.github/workflows/real-iq-sample.yml'
+
+concurrency:
+  group: real-iq-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   independent-onair-reference:
     name: Compare real broadcast IQ with independent OnAir receiver
