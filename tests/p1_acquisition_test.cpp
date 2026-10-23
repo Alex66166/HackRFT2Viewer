@@ -4,6 +4,10 @@
 #include <cassert>
 #include <array>
 #include <random>
+#include <fstream>
+#include <iterator>
+#include <cstdint>
+#include <cmath>
 #include "DVB_T2/p1_symbol.h"
 class P1AcquisitionTest {
 public:
@@ -56,6 +60,37 @@ public:
   assert(found && params.fft_mode==FFTSIZE_32K);
   qInfo()<<"P1 full S1/S2 codewords / bounded correction / noise rejection / damaged RF PASS";
  }
+ static void realIqRegression(const char* path){
+  // Independently captured 2015 DVB-T2 Russia 546.0047 MHz,
+  // complex signed 8-bit at exactly 64/7 MS/s (not 10 MS/s).
+  // OnAir 3.0.0 reference decoded 32K P1 and estimated -13440.5 Hz CFO.
+  std::ifstream file(path,std::ios::binary);assert(file.good());
+  std::vector<int8_t> bytes((std::istreambuf_iterator<char>(file)),{});
+  assert(bytes.size()>100000 && bytes.size()%2==0);
+  std::vector<complex> input(bytes.size()/2);
+  for(size_t i=0;i<input.size();++i)
+   input[i]=complex(float(bytes[2*i])/127.f,float(bytes[2*i+1])/127.f);
+  p1_symbol p;std::vector<complex> buffer(50000);dvbt2_parameters params{};
+  int index=0,candidates=0,decoded=0;double offset=0;bool reset=false;
+  for(size_t pos=0;pos<input.size();pos+=8192){
+   int count=int(std::min<size_t>(8192,input.size()-pos)),consumed=0;
+   while(consumed<count){
+    bool good=false;
+    const int before=consumed;
+    if(p.execute(.02f,count,input.data()+pos,consumed,false,
+                 buffer.data(),index,params,offset,good,reset)){
+     ++candidates;
+     if(good)++decoded;
+    }
+    assert(consumed>before);
+   }
+  }
+  qInfo()<<"Real 546 MHz DVB-T2 P1 candidates/decoded"<<candidates<<decoded
+         <<"CFO estimate"<<offset<<"Hz; reference OnAir -13440.5 Hz";
+  assert(decoded>=1 && params.preamble==T2_SISO && params.fft_mode==FFTSIZE_32K);
+  assert(std::abs(offset+13440.5)<250.0);
+  qInfo()<<"Real 546 MHz P1 32K + fractional CFO versus independent OnAir PASS";
+ }
  static void run(){
   signalling();
   for(float bin:{-0.45f,-0.35f,0.35f,0.45f}){
@@ -91,5 +126,5 @@ public:
  }
 };
 #ifndef P1_NO_MAIN
-int main(int argc,char **argv){QCoreApplication app(argc,argv);P1AcquisitionTest::run();}
+int main(int argc,char **argv){QCoreApplication app(argc,argv);P1AcquisitionTest::run();if(argc==2)P1AcquisitionTest::realIqRegression(argv[1]);}
 #endif
