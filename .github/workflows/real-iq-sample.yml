@@ -65,6 +65,19 @@ jobs:
                   except Exception as exc: print('QUERY FAIL',query,repr(exc))
           except Exception as e: print('ON-AIR LIBRARY UNREACHABLE',repr(e))
           PY
+      - name: Inspect independently validated OnAir Windows reference receiver release
+        run: |
+          python3 - <<'PY'
+          import json, urllib.request
+          url='https://api.github.com/repos/adswill/OnAir/releases/latest'
+          try:
+              req=urllib.request.Request(url,headers={'Accept':'application/vnd.github+json','User-Agent':'HackRFT2Viewer-CI'})
+              with urllib.request.urlopen(req,timeout=25) as r: data=json.load(r)
+              print('ONAIR RELEASE',data.get('tag_name'))
+              for x in data.get('assets',[]):
+                  print('ONAIR ASSET',x['name'],x['size'],x['browser_download_url'])
+          except Exception as e: print('ONAIR RELEASE ERROR',repr(e))
+          PY
       - name: Retain real RF reference capture
         uses: actions/upload-artifact@v4
         with:
