@@ -28,7 +28,7 @@ public:
    if(!QFileInfo::exists(cli)){
     assert(QDir().mkpath(dir));
     QFile mock(cli);assert(mock.open(QIODevice::WriteOnly|QIODevice::Truncate));
-    assert(mock.write("#!/bin/sh\\necho 'quality: 80% MOCK'\\nsleep 15\\n")>0);
+    assert(mock.write("#!/bin/sh\necho 'quality: 80% MOCK'\nsleep 15\n")>0);
     mock.close();assert(mock.setPermissions(QFile::ReadOwner|QFile::WriteOwner|QFile::ExeOwner|
                                           QFile::ReadGroup|QFile::ExeGroup|
                                           QFile::ReadOther|QFile::ExeOther));
