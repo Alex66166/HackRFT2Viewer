@@ -153,6 +153,9 @@ bool p1_symbol::execute(float _level_detect, const int _len_in, complex *_in, in
                 // OFDM FFT bins. A real 546 MHz 32K/1/16 capture showed
                 // S1/S2 Hamming distances 20/47 before derotation, but 0/0
                 // after compensating +0.25..+0.5 P1-carrier spacing.
+                // For this capture +0.50 concentrates 99.9% of the P1 FFT
+                // energy on active carriers; it also agrees with the
+                // independent OnAir CFO measurement within ~50 Hz.
                 // Try the normal FFT first; pay for extra 1024-point FFTs
                 // only on a *detected* P1 whose signalling failed CRC.
                 auto try_decode = [&](float fractional_bin) {
@@ -170,7 +173,7 @@ bool p1_symbol::execute(float _level_detect, const int _len_in, complex *_in, in
                 if(!try_decode(0.0f)) {
                     std::array<complex,P1_A_PART> original;
                     std::copy_n(in_fft,P1_A_PART,original.begin());
-                    constexpr float fractional_bins[]={0.25f,-0.25f,0.45f,-0.45f};
+                    constexpr float fractional_bins[]={0.50f,-0.50f,0.25f,-0.25f};
                     for(float bin:fractional_bins) {
                         const complex step=std::polar(1.0f,
                             -float(M_PI_X_2)*bin/float(P1_A_PART));
