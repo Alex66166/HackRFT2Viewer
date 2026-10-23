@@ -1,5 +1,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
 #include "diagnostics.h"
 /* HackRF T2 Viewer - main window, GPL-3.0-or-later */
 #include "main_window.h"
@@ -1074,20 +1075,67 @@ void MainWindow::updatePipeline()
 }
 void MainWindow::loadIq()
 {
-    QString path=QFileDialog::getOpenFileName(this,QStringLiteral("I/Q signed int8 I,Q. Задайте исходную частоту дискретизации."),QString(),QStringLiteral("I/Q (*.cs8 *.iq);;Все файлы (*)"));
+    const QString path=QFileDialog::getOpenFileName(
+        this,QStringLiteral("I/Q: signed 8-bit I,Q (CS8 / SigMF ci8)"),QString(),
+        QStringLiteral("I/Q (*.cs8 *.iq *.sigmf-data);;Все файлы (*)"));
     if(path.isEmpty())return;
-    stopReceiver();
-    QFile metadata(path+QStringLiteral(".json"));
+    const bool sigmf=path.endsWith(QStringLiteral(".sigmf-data"),Qt::CaseInsensitive);
+    const QString metadataPath=sigmf
+        ? path.left(path.size()-QStringLiteral(".sigmf-data").size())+QStringLiteral(".sigmf-meta")
+        : path+QStringLiteral(".json");
+    double rate=0.0,frequency=0.0;
+    QFile metadata(metadataPath);
     if(metadata.open(QIODevice::ReadOnly)) {
-        const auto object=QJsonDocument::fromJson(metadata.read(65536)).object();
-        const double rate=object.value(QStringLiteral("sample_rate_hz")).toDouble();
-        const int index=m_sampleRate->findData(rate);
-        if(index>=0) m_sampleRate->setCurrentIndex(index);
-        const double frequency=object.value(QStringLiteral("frequency_hz")).toDouble();
+        const auto document=QJsonDocument::fromJson(metadata.read(65536));
+        if(!document.isObject()) {
+            QMessageBox::warning(this,QStringLiteral("I/Q"),QStringLiteral("Некорректный файл метаданных."));
+            return;
+        }
+        const QJsonObject object=document.object();
+        if(sigmf) {
+            const QJsonObject global=object.value(QStringLiteral("global")).toObject();
+            const QString datatype=global.value(QStringLiteral("core:datatype")).toString();
+            // Unlike cs8, many downloaded SigMF recordings are cf32/ci16.
+            // Treating their bytes as signed I/Q silently breaks P1 and FEC.
+            if(datatype!=QStringLiteral("ci8") &&
+               datatype!=QStringLiteral("ci8_le") &&
+               datatype!=QStringLiteral("ci8_be")) {
+                QMessageBox::warning(this,QStringLiteral("I/Q"),
+                    QStringLiteral("SigMF содержит %1. Сейчас поддерживается только signed 8-bit complex (ci8).")
+                    .arg(datatype.isEmpty()?QStringLiteral("неизвестный формат"):datatype));
+                return;
+            }
+            rate=global.value(QStringLiteral("core:sample_rate")).toDouble();
+            const auto captures=object.value(QStringLiteral("captures")).toArray();
+            if(!captures.isEmpty()) frequency=captures[0].toObject().value(QStringLiteral("core:frequency")).toDouble();
+        } else {
+            rate=object.value(QStringLiteral("sample_rate_hz")).toDouble();
+            frequency=object.value(QStringLiteral("frequency_hz")).toDouble();
+        }
+        if(rate>0) {
+            const int index=m_sampleRate->findData(rate);
+            if(index<0) {
+                QMessageBox::warning(this,QStringLiteral("I/Q"),
+                    QStringLiteral("Частота дискретизации %1 MS/s не поддерживается.").arg(rate/1e6));
+                return;
+            }
+            m_sampleRate->setCurrentIndex(index);
+        } else if(sigmf) {
+            QMessageBox::warning(this,QStringLiteral("I/Q"),
+                QStringLiteral("SigMF не содержит частоту дискретизации."));
+            return;
+        }
         if(frequency>=1e6 && frequency<=6e9) m_frequencyMhz->setValue(frequency/1e6);
-        appendLog(QStringLiteral("Метаданные I/Q прочитаны: %1 MS/s").arg(m_sampleRate->currentData().toDouble()/1e6));
+        appendLog(QStringLiteral("Метаданные I/Q: %1 MS/s, файл %2")
+            .arg(m_sampleRate->currentData().toDouble()/1e6).arg(metadataPath));
+    } else if(sigmf) {
+        QMessageBox::warning(this,QStringLiteral("I/Q"),
+            QStringLiteral("Для SigMF нужен соседний файл .sigmf-meta."));
+        return;
     }
-    m_iqPath=path;appendLog(QStringLiteral("Источник I/Q: ")+path);startReceiver();
+    stopReceiver();m_iqPath=path;
+    appendLog(QStringLiteral("Источник I/Q: ")+path);
+    startReceiver();
 }
 void MainWindow::savePreferences()
 {
