@@ -469,7 +469,10 @@ void MainWindow::connectUi()
 {
     connect(m_serviceCombo,qOverload<int>(&QComboBox::activated),this,[this](int){if(m_vlc->state()!=QProcess::NotRunning)launchVlc();});
     connect(m_plpCombo,qOverload<int>(&QComboBox::activated),this,[this](int){
-        if(m_transport)QMetaObject::invokeMethod(m_transport,"select_plp",Qt::QueuedConnection,Q_ARG(int,m_plpCombo->currentData().toInt()));
+        const int selected = m_plpCombo->currentData().toInt();
+        if(m_receiver)
+            m_receiver->demodulator()->deinterleaver->setDecodedPlp(selected < 0 ? -2 : selected);
+        if(m_transport)QMetaObject::invokeMethod(m_transport,"select_plp",Qt::QueuedConnection,Q_ARG(int,selected));
         m_serviceCombo->clear();
         if(m_plpCount>0 && m_serviceCount==0)m_serviceCombo->addItem(QStringLiteral("PLP найден — ждём TS/PAT/SDT"),-2);
         else m_serviceCombo->addItem(QStringLiteral("Весь мультиплекс"),-1);
@@ -619,6 +622,10 @@ void MainWindow::startReceiver()
 void MainWindow::connectDemodulator()
 {
     const auto session=m_session;auto *demod=m_receiver->demodulator();
+    // Restrict costly FEC decoding to the chosen television PLP while keeping
+    // the original all-PLP mode available to receiver regression tests.
+    const int plpSelection=m_plpCombo->currentData().toInt();
+    demod->deinterleaver->setDecodedPlp(plpSelection < 0 ? -2 : plpSelection);
     // Copy borrowed DSP pointers on their producer thread before queuing a plot update.
     auto snapshot=[this,session](plot *target,auto method){
         auto timer=std::make_shared<QElapsedTimer>();
