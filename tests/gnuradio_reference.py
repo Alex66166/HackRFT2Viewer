@@ -11,6 +11,7 @@ This is an interoperability regression, not a DVB certification or RF hardware t
 """
 import argparse
 import json
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -32,7 +33,25 @@ def generate(args):
     packets[:, 0:3] = [0x47, 1, 0]  # PID 256, payload only
     packets[:, 3] = 0x10 + np.arange(PACKET_COUNT) % 16
     packets[:, 4:8] = np.arange(PACKET_COUNT, dtype='>u4').view(np.uint8).reshape(-1, 4)
-    packets.tofile(directory / 'input.ts')
+    if args.av:
+        # Independent, *actual decodable* MPEG-TS: FFmpeg creates one
+        # MPEG-2 video and one MP2 audio elementary stream with PAT/PMT.
+        # The GNU Radio physical-layer transmitter receives this TS as
+        # unmodified input. Playback validation does not use receiver
+        # encoders or any precomputed expected payload from the decoder.
+        subprocess.run([
+            'ffmpeg', '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+            '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=25',
+            '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000',
+            '-t', '8', '-c:v', 'mpeg2video', '-b:v', '700k',
+            '-c:a', 'mp2', '-b:a', '128k',
+            '-f', 'mpegts', str(directory / 'input.ts'),
+        ], check=True)
+        ts = np.fromfile(directory / 'input.ts', dtype=np.uint8)
+        if ts.size < 188 * 100 or ts.size % 188 != 0 or np.any(ts[::188] != 0x47):
+            raise RuntimeError('FFmpeg did not produce a valid 188-byte MPEG-TS source')
+    else:
+        packets.tofile(directory / 'input.ts')
 
     standard, fec, rate = dtv.STANDARD_DVBT2, dtv.FECFRAME_NORMAL, dtv.C4_5
     qam, rotation = dtv.MOD_64QAM, dtv.ROTATION_ON
@@ -88,6 +107,7 @@ def generate(args):
     first_packet = (FEC_BLOCKS * DATA_BYTES_PER_BBFRAME + 186) // 187
     end_packet = args.frames * FEC_BLOCKS * DATA_BYTES_PER_BBFRAME // 187
     metadata = dict(gnuradio=gr.version(), frames=args.frames, snr_db=args.snr,
+                    av=bool(args.av),
                     sample_rate_hz=10000000, first_packet=first_packet,
                     end_packet=end_packet, expected_fec=(args.frames - 1) * FEC_BLOCKS)
     (directory / 'fixture.json').write_text(json.dumps(metadata, indent=2) + '\n')
@@ -106,6 +126,16 @@ def verify(args):
     mismatch = np.count_nonzero(output != expected)
     if mismatch:
         raise RuntimeError(f'TS differs from the independent source in {mismatch} bytes')
+    if metadata.get('av'):
+        probe = subprocess.run([
+            'ffprobe', '-v', 'error', '-show_entries',
+            'stream=codec_type,codec_name', '-of', 'csv=p=0',
+            str(args.output),
+        ], check=True, capture_output=True, text=True).stdout
+        tracks = {line.strip() for line in probe.splitlines()}
+        if not {'video,mpeg2video', 'audio,mp2'}.issubset(tracks):
+            raise RuntimeError(f'No playable MPEG-2 video and MP2 audio in recovered TS: {tracks}')
+        print('PASS: FFprobe found playable MPEG-2 video and MP2 audio in the recovered DVB-T2 TS')
     print(f'PASS: {end - first} packets, {expected_bytes} exact TS bytes; no gaps or duplicates')
 
 
@@ -116,6 +146,7 @@ def main():
     generator.add_argument('directory', type=Path)
     generator.add_argument('--frames', type=int, default=5, choices=range(3, 13))
     generator.add_argument('--snr', type=float, default=20)
+    generator.add_argument('--av', action='store_true', help='Use FFmpeg-created MPEG-2 video and MP2 audio TS')
     verifier = commands.add_parser('verify')
     verifier.add_argument('directory', type=Path)
     verifier.add_argument('output', type=Path)
