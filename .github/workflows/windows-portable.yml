@@ -8,6 +8,35 @@ on:
     branches: [ main ]
 
 jobs:
+  real-iq-probe:
+    name: Inspect real 546 MHz broadcast sample
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download externally recorded DVB-T2 signal
+        run: |
+          mkdir -p real-iq/raw
+          curl -fSL --retry 2 --connect-timeout 15 --max-time 120 \
+            'https://www.radioscanner.ru/files/download/file18613/t2.rar' -o real-iq/t2.rar
+          sha256sum real-iq/t2.rar
+          file real-iq/t2.rar
+          test "$(stat -c%s real-iq/t2.rar)" -gt 1000000
+      - name: Identify native IQ format, contents and extracted files
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends 7zip python3-numpy
+          7z l -slt real-iq/t2.rar | head -150
+          7z x -y -oreal-iq/raw real-iq/t2.rar
+          test "$(du -sb real-iq/raw | cut -f1)" -lt 300000000
+          python3 tests/probe_real_iq.py real-iq/raw
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: Real-2015-Russian-DVB-T2-IQ
+          path: real-iq/
+          retention-days: 7
+
   native-tests:
     name: Native receiver regressions (ASan and UBSan)
     runs-on: ubuntu-24.04
