@@ -12,6 +12,47 @@ on:
       - 'tests/probe_real_iq.py'
       - '.github/workflows/real-iq-sample.yml'
 jobs:
+  real-iq-replay:
+    name: Native receiver acquisition on real 546 MHz RF
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the native DVB-T2 receiver build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential qtbase5-dev qtbase5-dev-tools libfftw3-dev libusb-1.0-0-dev ripgrep python3-numpy 7zip
+      - name: Download and convert true 64/7 Msps real RF
+        run: |
+          mkdir -p real-iq/raw
+          curl -fSL --retry 2 --connect-timeout 15 --max-time 120 'https://www.radioscanner.ru/files/download/file18613/t2.rar' -o real-iq/t2.rar
+          7z x -y -oreal-iq/raw real-iq/t2.rar
+          python3 tests/convert_real_iq.py real-iq/raw/t2/_VV.CPX real-iq/real.cs8 --rate 9142857.142857143
+      - name: Build real receiver and replay input as genuine DVB-T2 I/Q
+        shell: bash
+        run: |
+          set +e
+          QT_NATIVE=/usr SANITIZE=0 TESTS=iq_replay_test NO_GUI=1 \
+            bash build-tests-native.sh real-iq/real.cs8 real-iq/output.ts 9142857.142857143 > real-iq/replay.log 2>&1
+          code=$?
+          tail -120 real-iq/replay.log
+          echo "Offline replay exit code: $code" | tee real-iq/summary.txt
+          # This 113-ms capture may not include the full PLP frame;
+          # no TS (exit 3) is an honest observation, not a test pass.
+          if [ "$code" != 0 ] && [ "$code" != 3 ]; then exit "$code"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Native-replay-real-546MHz-logs-and-binary
+          path: |
+            real-iq/replay.log
+            real-iq/summary.txt
+            real-iq/output.ts
+            real-iq/output.ts.profile.csv
+            build-native/iq_replay_test
+          retention-days: 7
+          if-no-files-found: warn
+
   real-iq-probe:
     name: Download and inspect Russian DVB-T2 RF I/Q
     runs-on: ubuntu-24.04
