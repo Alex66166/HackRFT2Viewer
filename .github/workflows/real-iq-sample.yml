@@ -53,7 +53,16 @@ jobs:
                   html=r.read(200000).decode('utf-8','replace')
                   print('ON-AIR LIBRARY',r.status,'HTML',len(html),'FINAL',r.url)
                   for match in re.findall(r'.{0,90}(?:dvb.?t2|\.sigmf|\.cs8|/api/).{0,140}',html,re.I)[:30]:print(match)
-                  print('HTML HEAD',html[:800])
+                  print('LIBRARY TAGS:',re.findall(r'href="/\\?tag=([^"]+)"',html))
+                  print('LIBRARY ITEMS:',re.findall(r'href="/(?:sample|s)/([^"]+)"',html)[:40])
+                  print('HTML HEAD',html[:1500])
+              for query in ('?tag=dvb-t2','?q=dvb-t2'):
+                  try:
+                      with urllib.request.urlopen(urllib.request.Request(url+query,headers={'User-Agent':'Mozilla/5.0'}),timeout=20) as response:
+                          result=response.read(200000).decode('utf-8','replace')
+                          print('QUERY',query,'size',len(result),'contains T2',bool(re.search('DVB.T2',result,re.I)))
+                          print('QUERY CONTENT',re.sub(r'<[^>]+>',' ',result)[:1400])
+                  except Exception as exc: print('QUERY FAIL',query,repr(exc))
           except Exception as e: print('ON-AIR LIBRARY UNREACHABLE',repr(e))
           PY
       - name: Retain real RF reference capture
