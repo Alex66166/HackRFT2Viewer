@@ -58,6 +58,28 @@ public:
  }
  static void run(){
   signalling();
+  for(float bin:{-0.45f,-0.35f,0.35f,0.45f}){
+   p1_symbol p;
+   auto input=waveform(p,0.1f,10);
+   // 1024-sample P1 FFT can straddle an RF carrier offset of almost half
+   // a bin. This must not defeat S1/S2 despite the strong A/B/C correlation.
+   const float step=float(2.0*M_PI)*bin/1024.0f;
+   complex phase(1.0f,0.0f),rot=std::polar(1.0f,step);
+   for(auto &sample:input){sample*=phase;phase*=rot;}
+   std::vector<complex> buffer(50000);dvbt2_parameters params{};
+   int index=0;double offset=0;bool reset=false,found=false;
+   for(int pos=0;pos<int(input.size());pos+=257){
+    int count=std::min(257,int(input.size())-pos),consumed=0;
+    while(consumed<count){
+     bool decoded=false;
+     p.execute(.02f,count,input.data()+pos,consumed,false,
+               buffer.data(),index,params,offset,decoded,reset);
+     found|=decoded;
+    }
+   }
+   assert(found && params.fft_mode==FFTSIZE_32K);
+   qInfo()<<"P1 fractional carrier offset"<<bin<<"FFT bins PASS";
+  }
   for(float amp:{.5f,.1f,.02f,.005f}){
    p1_symbol p;auto input=waveform(p,amp);std::vector<complex> buffer(50000);dvbt2_parameters params{};
    int index=0;double offset=0;bool decoded=false,reset=false,found=false;
