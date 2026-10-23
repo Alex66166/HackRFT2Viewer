@@ -158,19 +158,24 @@ bool p1_symbol::execute(float _level_detect, const int _len_in, complex *_in, in
                 // independent OnAir CFO measurement within ~50 Hz.
                 // Try the normal FFT first; pay for extra 1024-point FFTs
                 // only on a *detected* P1 whose signalling failed CRC.
-                auto try_decode = [&](float fractional_bin) {
+                auto try_decode = [&]() {
                     for(int shift=80;shift<92;++shift) {
                         if(demodulate(p1_fft+shift,_dvbt2)) {
                             p1_decoded=true;
+                            // A/B/C correlation phase already estimates
+                            // fractional CFO. FFT derotation repairs the
+                            // signalling decision only. Adding the fraction
+                            // here again double-counts it: on the real
+                            // 546 MHz capture that caused a 4.46 kHz error.
                             coarse_freq_offset +=
-                                (double(shift-first_active_carrier)+fractional_bin)
+                                double(shift-first_active_carrier)
                                 *double(P1_CARRIER_SPASING);
                             return true;
                         }
                     }
                     return false;
                 };
-                if(!try_decode(0.0f)) {
+                if(!try_decode()) {
                     std::array<complex,P1_A_PART> original;
                     std::copy_n(in_fft,P1_A_PART,original.begin());
                     constexpr float fractional_bins[]={0.50f,-0.50f,0.25f,-0.25f};
@@ -183,7 +188,7 @@ bool p1_symbol::execute(float _level_detect, const int _len_in, complex *_in, in
                             phase*=step;
                         }
                         p1_fft=fft->execute();
-                        if(try_decode(bin))break;
+                        if(try_decode())break;
                     }
                 }
                 _p1_decoded = p1_decoded;
