@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install native test dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends g++ ripgrep qtbase5-dev qtbase5-dev-tools libfftw3-dev libusb-1.0-0-dev gnuradio python3-scipy
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends g++ ripgrep qtbase5-dev qtbase5-dev-tools libfftw3-dev libusb-1.0-0-dev gnuradio python3-scipy ffmpeg
       - name: Run receiver, FEC, transport and GUI tests
         env:
           QT_NATIVE: /usr
@@ -33,6 +33,30 @@ jobs:
           NO_GUI=0 SKIP_CORE=1 GUI_TEST=gui_iq_replay_test bash build-tests-native.sh "$RUNNER_TEMP/gr-reference/input.cs8" "$RUNNER_TEMP/gr-gui-output.ts"
           python3 tests/gnuradio_reference.py verify "$RUNNER_TEMP/gr-reference" "$RUNNER_TEMP/gr-gui-output.ts"
           cp "$RUNNER_TEMP/gr-gui-output.ts" "$RUNNER_TEMP/gr-reference/expected.ts"
+      - name: Validate recovered real video and audio from GNU Radio DVB-T2 IQ
+        env:
+          QT_NATIVE: /usr
+          SANITIZE: '1'
+          TESTS: iq_replay_test
+          NO_GUI: '1'
+        run: |
+          python3 tests/gnuradio_reference.py generate "$RUNNER_TEMP/gr-av" --frames 5 --snr 20 --av
+          bash build-tests-native.sh "$RUNNER_TEMP/gr-av/input.cs8" "$RUNNER_TEMP/gr-av-cli.ts"
+          python3 tests/gnuradio_reference.py verify "$RUNNER_TEMP/gr-av" "$RUNNER_TEMP/gr-av-cli.ts"
+          NO_GUI=0 SKIP_CORE=1 GUI_TEST=gui_iq_replay_test bash build-tests-native.sh "$RUNNER_TEMP/gr-av/input.cs8" "$RUNNER_TEMP/gr-av-gui.ts"
+          python3 tests/gnuradio_reference.py verify "$RUNNER_TEMP/gr-av" "$RUNNER_TEMP/gr-av-gui.ts"
+          cp "$RUNNER_TEMP/gr-av-gui.ts" "$RUNNER_TEMP/gr-av/expected.ts"
+      - name: Save independent Windows AV receiver fixture
+        uses: actions/upload-artifact@v7
+        with:
+          name: Independent-DVB-T2-Video-Audio-Fixture
+          path: |
+            ${{ runner.temp }}/gr-av/input.cs8
+            ${{ runner.temp }}/gr-av/fixture.json
+            ${{ runner.temp }}/gr-av/expected.ts
+          retention-days: 7
+          if-no-files-found: error
+
       - name: Save independent Windows receiver fixture
         uses: actions/upload-artifact@v7
         with:
@@ -221,7 +245,40 @@ jobs:
           $actual = (Get-FileHash -Algorithm SHA256 $output).Hash
           if ($actual -ne $expected) { throw "Windows TS differs from the independently verified source: $actual" }
           Write-Host "Windows GUI RF-to-TS PASS: $((Get-Item $output).Length) exact bytes, SHA256 $actual"
-          Remove-Item $exe
+          # Keep the packaged GUI test binary for the following AV fixture
+
+      - name: Download independent DVB-T2 video and audio fixture
+        uses: actions/download-artifact@v8
+        with:
+          name: Independent-DVB-T2-Video-Audio-Fixture
+          path: windows-av-fixture
+
+      - name: Verify packaged Windows demodulator returns exact playable AV TS
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dist = (Resolve-Path 'build-portable/HackRFT2Viewer-Portable-1.4.2-RC3').Path
+          $fixture = (Resolve-Path 'windows-av-fixture').Path
+          $output = Join-Path $fixture 'windows-av-output.ts'
+          $env:PATH = "$dist;$env:SystemRoot\System32;$env:SystemRoot"
+          $env:QT_OPENGL = 'software'
+          $env:QT_PLUGIN_PATH = $dist
+          $env:QT_QPA_PLATFORM_PLUGIN_PATH = Join-Path $dist 'platforms'
+          $exe = Join-Path $dist 'HackRFT2Viewer.exe'
+          # GuiIqReplayTest was removed by the preceding packaged gate: rebuild
+          # not needed; save the test runner next to the portable application.
+          $runner = Join-Path $dist 'GuiIqReplayTest.exe'
+          if (-not (Test-Path $runner)) { throw 'Missing GUI test runner for AV fixture' }
+          $arguments = '"{0}" "{1}"' -f (Join-Path $fixture 'input.cs8'), $output
+          $process = Start-Process -FilePath $runner -ArgumentList $arguments -PassThru -NoNewWindow
+          if (-not $process.WaitForExit(90000)) { $process.Kill(); throw 'Windows AV GUI test timed out' }
+          if ($process.ExitCode -ne 0) { throw "Windows AV GUI failed: $($process.ExitCode)" }
+          $expected = (Get-FileHash -Algorithm SHA256 (Join-Path $fixture 'expected.ts')).Hash
+          $actual = (Get-FileHash -Algorithm SHA256 $output).Hash
+          if ($actual -ne $expected) { throw "Windows AV transport mismatch: $actual" }
+          Write-Host "Windows exact video+audio transport PASS: $((Get-Item $output).Length) bytes"
+          Remove-Item $runner
 
       - name: Package and checksum
         shell: pwsh
