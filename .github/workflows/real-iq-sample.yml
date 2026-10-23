@@ -78,6 +78,13 @@ jobs:
                   print('ONAIR ASSET',x['name'],x['size'],x['browser_download_url'])
           except Exception as e: print('ONAIR RELEASE ERROR',repr(e))
           PY
+      - name: Verify whether known-working OnAir Windows package includes a CLI receiver
+        run: |
+          curl --fail --location --retry 2 --connect-timeout 15 --max-time 210 \
+            'https://github.com/adswill/OnAir/releases/download/v3.0.0/OnAir-3.0.0-windows-x64.zip' \
+            -o /tmp/onair-windows.zip
+          echo "OnAir 3.0.0 Windows archive size $(stat -c%s /tmp/onair-windows.zip)"
+          unzip -Z -1 /tmp/onair-windows.zip | grep -Ei '(onair-cli|dect2cli|onair.exe|license|copying|readme|\.exe$)' | head -60
       - name: Retain real RF reference capture
         uses: actions/upload-artifact@v4
         with:
