@@ -1,0 +1,46 @@
+name: Probe independent real DVB-T2 IQ sample
+on:
+  workflow_dispatch:
+  push:
+    branches: [ fix/dvbt2-pilot-equalizer-perf ]
+    paths:
+      - 'tests/probe_real_iq.py'
+      - '.github/workflows/real-iq-sample.yml'
+jobs:
+  real-iq-probe:
+    name: Download and inspect Russian DVB-T2 RF I/Q
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download published 2015 over-the-air Russian DVB-T2 capture
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p real-iq/raw
+          curl --fail --location --retry 2 --connect-timeout 15 --max-time 120 \
+            --user-agent 'Mozilla/5.0 HackRFT2Viewer CI receiver research' \
+            'https://www.radioscanner.ru/files/download/file18613/t2.rar' \
+            --output real-iq/t2.rar
+          test "$(stat -c%s real-iq/t2.rar)" -gt 1000000
+          test "$(stat -c%s real-iq/t2.rar)" -lt 25000000
+          sha256sum real-iq/t2.rar
+          file real-iq/t2.rar
+      - name: Inspect archive without running contents
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends 7zip python3-numpy
+          7z l -slt real-iq/t2.rar | head -220
+          7z x -y -oreal-iq/raw real-iq/t2.rar
+          du -ah real-iq/raw | tail -30
+          test "$(du -sb real-iq/raw | cut -f1)" -lt 300000000
+          python3 tests/probe_real_iq.py real-iq/raw
+      - name: Retain real RF reference capture
+        uses: actions/upload-artifact@v4
+        with:
+          name: Real-DVB-T2-Russia-546MHz-IQ-original
+          path: real-iq/
+          retention-days: 7
+          if-no-files-found: error
