@@ -26,6 +26,15 @@ The full application source accompanies this distribution in Source-1.4.0.zip.
 - GCC / MinGW-w64 runtime: GCC contributors, GPL with GCC Runtime Library Exception; MinGW-w64 copyright notices.
   https://gcc.gnu.org/onlinedocs/libstdc++/manual/license.html
   https://www.mingw-w64.org/
+- OnAir v3.0.0: https://github.com/adswill/OnAir , GNU GPL v3 and respective
+  third-party component licenses. This distribution bundles the official,
+  unmodified Windows x64 release in the `OnAir/` folder as an independently
+  launched HackRF/DVB-T2 decoder. In accordance with GPL source requirements,
+  corresponding upstream source code is published at
+  https://github.com/adswill/OnAir/releases/tag/v3.0.0
+  (artifact `onair-3.0.0-source.tar.gz`), with release checksum `SHA256SUMS`.
+  OnAir is a separate process and broadcasts MPEG-TS over loopback UDP to VLC.
+  This project is not affiliated with or endorsed by OnAir contributors.
 - VLC 3.0.23 x64: VideoLAN and contributors, GPL-2.0-or-later and component licenses.
   VLC is an unmodified, separate program under vlc/ with its COPYING.txt, AUTHORS.txt, THANKS.txt.
   Official binary: https://download.videolan.org/pub/videolan/vlc/3.0.23/win64/vlc-3.0.23-win64.zip
