@@ -129,11 +129,12 @@ def verify(args):
     if metadata.get('av'):
         probe = subprocess.run([
             'ffprobe', '-v', 'error', '-show_entries',
-            'stream=codec_type,codec_name', '-of', 'csv=p=0',
+            'stream=codec_type,codec_name', '-of', 'json',
             str(args.output),
         ], check=True, capture_output=True, text=True).stdout
-        tracks = {line.strip() for line in probe.splitlines()}
-        if not {'video,mpeg2video', 'audio,mp2'}.issubset(tracks):
+        tracks = {(stream.get('codec_type'), stream.get('codec_name'))
+                  for stream in json.loads(probe).get('streams', [])}
+        if not {('video', 'mpeg2video'), ('audio', 'mp2')}.issubset(tracks):
             raise RuntimeError(f'No playable MPEG-2 video and MP2 audio in recovered TS: {tracks}')
         print('PASS: FFprobe found playable MPEG-2 video and MP2 audio in the recovered DVB-T2 TS')
     print(f'PASS: {end - first} packets, {expected_bytes} exact TS bytes; no gaps or duplicates')
