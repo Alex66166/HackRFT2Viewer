@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert known complex-float32 DVB-T2 I/Q to HackRF signed 8-bit I/Q.
+"""Convert 64/7 MS/s complex-float32 DVB-T2 I/Q to HackRF signed 8-bit I/Q.
 
 Quantize both I and Q with one shared scale (never individual AGC),
 without changing sample timing or frequency. The original remains intact.
@@ -13,7 +13,7 @@ import numpy as np
 p = argparse.ArgumentParser()
 p.add_argument("input", type=Path)
 p.add_argument("output", type=Path)
-p.add_argument("--rate", type=float, default=10_000_000)
+p.add_argument("--rate", type=float, default=64_000_000/7)
 p.add_argument("--freq", type=float, default=546_004_700)
 a = p.parse_args()
 if not a.input.is_file() or a.input.stat().st_size % 8:
