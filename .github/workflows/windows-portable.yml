@@ -296,7 +296,7 @@ jobs:
           Invoke-WebRequest -Uri ($base + $archiveName) -OutFile $zip
           Invoke-WebRequest -Uri ($base + 'SHA256SUMS') -OutFile $sums
           $entry = Get-Content $sums | Where-Object { $_ -match [regex]::Escape($archiveName) } | Select-Object -First 1
-          if (-not $entry -or $entry -notmatch '^([0-9A-Fa-f]{64})\s+\*?') {
+          if (-not $entry -or -not ($entry -match '^([0-9A-Fa-f]{64})\s+\*?')) {
               throw "Cannot verify the OnAir release checksum: $entry"
           }
           $expected = $Matches[1].ToLowerInvariant()
