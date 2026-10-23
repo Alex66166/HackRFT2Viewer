@@ -33,6 +33,17 @@ jobs:
           NO_GUI=0 SKIP_CORE=1 GUI_TEST=gui_iq_replay_test bash build-tests-native.sh "$RUNNER_TEMP/gr-reference/input.cs8" "$RUNNER_TEMP/gr-gui-output.ts"
           python3 tests/gnuradio_reference.py verify "$RUNNER_TEMP/gr-reference" "$RUNNER_TEMP/gr-gui-output.ts"
           cp "$RUNNER_TEMP/gr-gui-output.ts" "$RUNNER_TEMP/gr-reference/expected.ts"
+      - name: Stress independent DVB-T2 RF-to-TS under echoes and carrier offset
+        env:
+          QT_NATIVE: /usr
+          SANITIZE: '1'
+          NO_GUI: '1'
+          TESTS: iq_replay_test
+        run: |
+          python3 tests/gnuradio_reference.py generate "$RUNNER_TEMP/gr-echo" --frames 4 --snr 22 --echo-delay 48 --echo-gain 0.15 --cfo-hz 70
+          bash build-tests-native.sh "$RUNNER_TEMP/gr-echo/input.cs8" "$RUNNER_TEMP/gr-echo-output.ts"
+          python3 tests/gnuradio_reference.py verify "$RUNNER_TEMP/gr-echo" "$RUNNER_TEMP/gr-echo-output.ts"
+
       - name: Validate recovered real video and audio from GNU Radio DVB-T2 IQ
         env:
           QT_NATIVE: /usr
