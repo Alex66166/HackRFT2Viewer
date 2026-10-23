@@ -703,6 +703,7 @@ void MainWindow::startOnAirReceiver()
     m_running=true;
     setRunningUi(true);
     m_lockValue->setText(QStringLiteral("OnAir: DVB-T2"));
+    m_pipeline->setText(QStringLiteral("Независимый DVB-T2 декодер: OnAir 3.0.0; MPEG-TS передаётся в VLC через UDP."));
     m_serviceCombo->clear();
     m_serviceCombo->addItem(QStringLiteral("Весь мультиплекс (OnAir)"),-1);
     appendLog(QStringLiteral("OnAir запущен: %1 МГц, UDP 127.0.0.1:%2, HackRF Pro.")
@@ -712,8 +713,9 @@ void MainWindow::startOnAirReceiver()
     // Start playback immediately: VLC can wait for PAT/PMT while the
     // independent receiver acquires the broadcast.
     QTimer::singleShot(800,this,[this,session]{
-        if(session==m_session && isOnAirActive() && m_vlc->state()==QProcess::NotRunning)
-            launchVlc();
+        if(session!=m_session || !isOnAirActive() || m_vlc->state()!=QProcess::NotRunning)return;
+        if(QFileInfo(m_vlcPath->text()).isFile())launchVlc();
+        else appendLog(QStringLiteral("VLC не найден: укажите vlc.exe для просмотра DVB-T2 со звуком."));
     });
 }
 
