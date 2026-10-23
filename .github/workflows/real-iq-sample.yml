@@ -1,6 +1,11 @@
 name: Probe independent real DVB-T2 IQ sample
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'tests/probe_real_iq.py'
+      - '.github/workflows/real-iq-sample.yml'
   push:
     branches: [ fix/dvbt2-pilot-equalizer-perf ]
     paths:
