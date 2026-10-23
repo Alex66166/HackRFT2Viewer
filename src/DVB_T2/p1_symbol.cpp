@@ -18,6 +18,7 @@
 
 #include "DSP/fast_math.h"
 #include <array>
+#include <algorithm>
 
 #define P1_HERTZ_PER_RADIAN (HERTZ_PER_RADIAN / P1_A_PART)
 
