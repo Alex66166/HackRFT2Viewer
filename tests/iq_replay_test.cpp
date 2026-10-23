@@ -54,7 +54,7 @@ public:
         const qint64 tsBytes=QFileInfo(output).size();
         qInfo()<<"RESULT bytes"<<bytes<<"sample_rate"<<rate<<"input_ms"<<bytes*500.0/rate
                <<"elapsed_ms"<<clock.elapsed()<<"realtime"<<realtime<<"drops"<<rx.m_queueDrops.load()
-               <<"P1/L1pre/L1post"<<demod->p1Matches<<demod->l1PreMatches<<demod->l1PostMatches
+               <<"P1/candidates/failedSignalling/L1pre/L1post"<<demod->p1Matches<<demod->p1Candidates<<demod->p1FailedSignalling<<demod->l1PreMatches<<demod->l1PostMatches
                <<"CP coherence/repeatability_dB/residual_Hz"<<demod->guardCoherence<<demod->guardRepeatabilityDb<<demod->residualFrequencyHz
                <<"BCH total/failed"<<metrics.bchFrames<<metrics.bchFailedFrames<<"TSbytes"<<tsBytes;
         const bool dropped=rx.m_queueDrops.load()!=0;
