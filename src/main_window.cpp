@@ -198,6 +198,7 @@ void MainWindow::buildUi()
     m_sampleRate->addItem(QStringLiteral("16 MS/s"), 16000000.0);
     m_sampleRate->addItem(QStringLiteral("20 MS/s"), 20000000.0);
     m_sampleRate->addItem(QStringLiteral("8 MS/s (экономия CPU)"), 8000000.0);
+    m_sampleRate->addItem(QStringLiteral("9.142857 MS/s (запись DVB-T2 I/Q)"), 64000000.0/7.0);
     m_bandwidth = new QComboBox;
     m_bandwidth->addItem(QStringLiteral("8 МГц"), 8000000);
     m_bandwidth->addItem(QStringLiteral("9 МГц"), 9000000);
@@ -1149,7 +1150,7 @@ void MainWindow::loadPreferences()
 {
     QSettings cfg(QCoreApplication::applicationDirPath()+"/settings.ini",QSettings::IniFormat);
     m_frequencyMhz->setValue(cfg.value("frequencyMHz",586).toDouble());m_lnaGain->setValue(cfg.value("lna",2).toInt());m_vgaGain->setValue(cfg.value("vga",8).toInt());m_rfAmp->setChecked(cfg.value("amp",false).toBool());
-    m_sampleRate->setCurrentIndex(qBound(0,cfg.value("rate",0).toInt(),4));m_scanDwell->setValue(cfg.value("dwell",12).toInt());m_udpPort->setValue(cfg.value("port",7654).toInt());
+    m_sampleRate->setCurrentIndex(qBound(0,cfg.value("rate",0).toInt(),m_sampleRate->count()-1));m_scanDwell->setValue(cfg.value("dwell",12).toInt());m_udpPort->setValue(cfg.value("port",7654).toInt());
     QString vlc=cfg.value("vlc").toString();if(QFileInfo::exists(vlc))m_vlcPath->setText(vlc);
     int count=qMin(10000,cfg.beginReadArray("channels"));m_found->setRowCount(count);
     for(int row=0;row<count;++row){cfg.setArrayIndex(row);quint64 frequency=cfg.value("frequency").toULongLong();auto *item=new QTableWidgetItem(QString::number(frequency/1e6,'f',3));item->setData(Qt::UserRole,frequency);m_found->setItem(row,0,item);m_found->setItem(row,1,new QTableWidgetItem(cfg.value("sid").toString()));m_found->setItem(row,2,new QTableWidgetItem(cfg.value("name").toString()));}cfg.endArray();{QSignalBlocker block(m_channelCombo);m_channelCombo->setCurrentIndex(m_channelCombo->findData(quint64(std::llround(m_frequencyMhz->value()*1e6))));}updatePipeline();
