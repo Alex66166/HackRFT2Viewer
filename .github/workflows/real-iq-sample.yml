@@ -88,6 +88,16 @@ jobs:
           code=$?
           tail -120 real-iq/replay.log
           echo "Offline replay exit code: $code" | tee real-iq/summary.txt
+          python3 tests/replay_real_iq_variants.py real-iq/real.cs8 real-iq/variants
+          for hypothesis in real-iq/variants/*.cs8; do
+            name="$(basename "$hypothesis" .cs8)"
+            build-native/iq_replay_test "$hypothesis" "real-iq/variants/$name.ts" 9142857.142857143 \
+              > "real-iq/variants/$name.log" 2>&1
+            result=$?
+            echo "$name replay exit=$result" | tee -a real-iq/summary.txt
+            grep -E 'RESULT bytes|P1/L1pre/L1post' "real-iq/variants/$name.log" | tail -3 || true
+            if [ "$result" != 0 ] && [ "$result" != 3 ]; then exit "$result"; fi
+          done
           # This 113-ms capture may not include the full PLP frame;
           # no TS (exit 3) is an honest observation, not a test pass.
           if [ "$code" != 0 ] && [ "$code" != 3 ]; then exit "$code"; fi
@@ -98,6 +108,7 @@ jobs:
           path: |
             real-iq/replay.log
             real-iq/summary.txt
+            real-iq/variants/*.log
             real-iq/output.ts
             real-iq/output.ts.profile.csv
             build-native/iq_replay_test
