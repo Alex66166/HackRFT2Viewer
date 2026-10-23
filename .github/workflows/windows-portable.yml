@@ -54,7 +54,7 @@ jobs:
           python3 tests/gnuradio_reference.py generate "$RUNNER_TEMP/gr-av" --frames 5 --snr 20 --av
           bash build-tests-native.sh "$RUNNER_TEMP/gr-av/input.cs8" "$RUNNER_TEMP/gr-av-cli.ts"
           python3 tests/gnuradio_reference.py verify "$RUNNER_TEMP/gr-av" "$RUNNER_TEMP/gr-av-cli.ts"
-          NO_GUI=0 SKIP_CORE=1 GUI_TEST=gui_iq_replay_test bash build-tests-native.sh "$RUNNER_TEMP/gr-av/input.cs8" "$RUNNER_TEMP/gr-av-gui.ts"
+          EXPECTED_SERVICE=Service01 NO_GUI=0 SKIP_CORE=1 GUI_TEST=gui_iq_replay_test bash build-tests-native.sh "$RUNNER_TEMP/gr-av/input.cs8" "$RUNNER_TEMP/gr-av-gui.ts"
           python3 tests/gnuradio_reference.py verify "$RUNNER_TEMP/gr-av" "$RUNNER_TEMP/gr-av-gui.ts"
           cp "$RUNNER_TEMP/gr-av-gui.ts" "$RUNNER_TEMP/gr-av/expected.ts"
       - name: Save independent Windows AV receiver fixture
@@ -281,6 +281,7 @@ jobs:
           # not needed; save the test runner next to the portable application.
           $runner = Join-Path $dist 'GuiIqReplayTest.exe'
           if (-not (Test-Path $runner)) { throw 'Missing GUI test runner for AV fixture' }
+          $env:EXPECTED_SERVICE = 'Service01'
           $arguments = '"{0}" "{1}"' -f (Join-Path $fixture 'input.cs8'), $output
           $process = Start-Process -FilePath $runner -ArgumentList $arguments -PassThru -NoNewWindow
           if (-not $process.WaitForExit(90000)) { $process.Kill(); throw 'Windows AV GUI test timed out' }
