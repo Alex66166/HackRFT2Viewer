@@ -135,6 +135,13 @@ public:
    },Qt::DirectConnection);
    std::vector<complex> data(L1_PRE_CELL+8100);for(int i=0;i<int(data.size());++i)data[i]=complex(float(i+1),float(2*(i+1)));
    ti.execute(data.size(),data.data());assert(emitted);qInfo()<<"Single PLP ID17 slice and non-rotated I/Q pairing PASS";
+   // Receiver tests keep the legacy all-PLP behaviour. Explicit selection
+   // must prevent expensive QAM/LDPC work on unrelated multiplex PLPs.
+   emitted=false;ti.setDecodedPlp(1);ti.l1_dyn_execute(post,0,nullptr);
+   ti.execute(data.size(),data.data());assert(!emitted);
+   emitted=false;ti.setDecodedPlp(-2);ti.l1_dyn_execute(post,0,nullptr);
+   ti.execute(data.size(),data.data());assert(emitted);
+   qInfo()<<"Selected/automatic PLP skips unrelated FEC dispatch PASS";
   }
   qInfo()<<"TI destruction PASS; constructing QAM";
   {
