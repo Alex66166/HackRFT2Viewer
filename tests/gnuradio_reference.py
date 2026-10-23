@@ -93,6 +93,15 @@ def generate(args):
         raise RuntimeError('GNU Radio did not produce the complete fixture')
     # Independent conversion: 64/7 MS/s -> 10 MS/s, then signed 8-bit I/Q.
     samples = resample_poly(samples, 35, 32, window=('kaiser', 8.0))
+    # Channel variations independent of the receiver implementation.
+    # Echoes inside the OFDM guard interval introduce frequency-selective
+    # fading; RF oscillator offsets stress carrier synchronization.
+    if args.echo_delay:
+        original = samples.copy()
+        samples[args.echo_delay:] += args.echo_gain * original[:-args.echo_delay]
+    if args.cfo_hz:
+        time = np.arange(len(samples), dtype=np.float64) / 10000000.0
+        samples *= np.exp(2j * np.pi * args.cfo_hz * time).astype(np.complex64)
     power = np.mean(abs(samples) ** 2)
     rng = np.random.default_rng(1226)
     sigma = np.sqrt(power / 2) * 10 ** (-args.snr / 20)
@@ -107,7 +116,8 @@ def generate(args):
     first_packet = (FEC_BLOCKS * DATA_BYTES_PER_BBFRAME + 186) // 187
     end_packet = args.frames * FEC_BLOCKS * DATA_BYTES_PER_BBFRAME // 187
     metadata = dict(gnuradio=gr.version(), frames=args.frames, snr_db=args.snr,
-                    av=bool(args.av),
+                    av=bool(args.av), cfo_hz=args.cfo_hz,
+                    echo_delay=args.echo_delay, echo_gain=args.echo_gain,
                     sample_rate_hz=10000000, first_packet=first_packet,
                     end_packet=end_packet, expected_fec=(args.frames - 1) * FEC_BLOCKS)
     (directory / 'fixture.json').write_text(json.dumps(metadata, indent=2) + '\n')
@@ -148,6 +158,11 @@ def main():
     generator.add_argument('--frames', type=int, default=5, choices=range(3, 13))
     generator.add_argument('--snr', type=float, default=20)
     generator.add_argument('--av', action='store_true', help='Use FFmpeg-created MPEG-2 video and MP2 audio TS')
+    generator.add_argument('--cfo-hz', type=float, default=0)
+    generator.add_argument('--echo-delay', type=int, default=0,
+                           help='Delayed multipath in original 10 MS/s samples')
+    generator.add_argument('--echo-gain', type=float, default=0.0,
+                           help='Relative delayed echo amplitude')
     verifier = commands.add_parser('verify')
     verifier.add_argument('directory', type=Path)
     verifier.add_argument('output', type=Path)
@@ -155,6 +170,10 @@ def main():
     if args.command == 'generate':
         if not np.isfinite(args.snr) or not 0 <= args.snr <= 100:
             parser.error('--snr must be finite and between 0 and 100 dB')
+        if not np.isfinite(args.cfo_hz) or not -1000 <= args.cfo_hz <= 1000:
+            parser.error('--cfo-hz must be between -1000 and +1000 Hz')
+        if not 0 <= args.echo_delay <= 8192 or not np.isfinite(args.echo_gain) or not 0 <= args.echo_gain <= 0.8:
+            parser.error('--echo-delay must be 0..8192 and --echo-gain must be 0..0.8')
         generate(args)
     else:
         verify(args)
