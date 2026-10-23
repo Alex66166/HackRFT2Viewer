@@ -1,12 +1,46 @@
 #define P1_NO_MAIN
 #include "p1_acquisition_test.cpp"
 #include "rx_hackrf_pro.h"
+#include "DSP/pilot_equalizer.h"
 #include <QMutex>
 #include <QMetaObject>
 #include <thread>
 class ReceiverRegressionTest {
 public:
  static void run(){
+  {
+   // Compare the hot-path phase oscillator with the former per-cell trig
+   // implementation for long pilot gaps, various phases and changing
+   // channel amplitudes. No radio input or carrier tables are involved.
+   std::mt19937 rng(20261023);
+   std::uniform_real_distribution<float> phase(-3.14f,3.14f),data(-2.f,2.f);
+   std::vector<complex> raw(64),fast(64);
+   std::vector<int> permutation(64);
+   for(int i=0;i<64;++i)permutation[i]=63-i;
+   for(int trial=0;trial<2000;++trial){
+    const int n=1+int(rng()%64);
+    const float startPhase=phase(rng),step=phase(rng)/64.f;
+    const float startAmp=1.f+std::abs(data(rng)),ampStep=data(rng)/128.f;
+    for(int i=0;i<n;++i)raw[i]=complex(data(rng),data(rng));
+    fast_equalize_pilot_gap(raw.data(),fast.data(),permutation.data(),
+                            n,startPhase,step,startAmp,ampStep);
+    float oldAngle=startPhase,oldAmp=startAmp;
+    for(int i=0;i<n;++i){
+     oldAngle+=step;oldAmp+=ampStep;
+     const complex expected=raw[i]*complex(std::cos(oldAngle)/oldAmp,
+                                           -std::sin(oldAngle)/oldAmp);
+     const complex actual=fast[permutation[i]];
+     assert(std::abs(actual-expected)<1.e-4f*(1.f+std::abs(expected)));
+    }
+   }
+   // Deep fades must not poison the LDPC decoder with Inf or NaN LLRs.
+   std::vector<complex> erased(64);
+   fast_equalize_pilot_gap(raw.data(),erased.data(),permutation.data(),64,
+                           0.f,0.f,0.f,0.f);
+   for(const auto &sample:erased)assert(sample==complex(0,0));
+   qInfo()<<"Fast pilot equalizer matches scalar reference PASS";
+  }
+
   iq_correct<int8_t> iq(7,.04f,.02f);std::vector<int8_t> zero(2048),nonzero(2048,12);std::vector<complex> corrected(1024);int gain=0;
   iq.execute(size_t(1024),zero.data(),corrected.data(),gain);iq.execute(size_t(1024),nonzero.data(),corrected.data(),gain);
   for(auto c:corrected)assert(std::isfinite(c.real())&&std::isfinite(c.imag()));
