@@ -75,6 +75,13 @@ jobs:
           bash build-tests-native.sh "$RUNNER_TEMP/gr-echo/input.cs8" "$RUNNER_TEMP/gr-echo-output.ts"
           python3 tests/gnuradio_reference.py verify "$RUNNER_TEMP/gr-echo" "$RUNNER_TEMP/gr-echo-output.ts"
 
+      - name: Export actual Linux DVB-T2 I/Q replay binary for independent capture analysis
+        uses: actions/upload-artifact@v7
+        with:
+          name: HackRFT2Viewer-Linux-IQ-Replay-ASAN
+          path: build-native/iq_replay_test
+          retention-days: 7
+          if-no-files-found: error
       - name: Replay downloaded real DVB-T2 broadcast IQ through native demodulator
         env:
           QT_NATIVE: /usr
