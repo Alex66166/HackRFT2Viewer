@@ -640,7 +640,7 @@ void MainWindow::startOnAirReceiver()
 {
     const QString cli=QCoreApplication::applicationDirPath()
         +QStringLiteral("/OnAir/onair-cli.exe");
-    if(!QFileInfo::isFile(cli)){
+    if(!QFileInfo(cli).isFile()){
         appendLog(QStringLiteral("OnAir: onair-cli.exe не найден в каталоге OnAir."));
         QMessageBox::warning(this,QStringLiteral("OnAir"),
             QStringLiteral("Не найден OnAir/onair-cli.exe рядом с HackRFT2Viewer.exe. "
