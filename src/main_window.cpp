@@ -604,7 +604,7 @@ void MainWindow::startReceiver()
     const auto session=++m_session;m_radioMetrics={};m_transportMetrics={};m_snr=-99;m_serviceCount=0;m_plpCount=0;m_statsLog.start();updatePipeline();
     m_lockValue->setText(QStringLiteral("ПОИСК P1"));m_snrValue->setText(QStringLiteral("—"));m_l1Info->clear();
     m_startButton->setEnabled(false);m_stopButton->setEnabled(true);m_sampleRate->setEnabled(false);m_bandwidth->setEnabled(false);
-    if(m_backendCombo->currentData().toInt()==1 && m_iqPath.isEmpty()){
+    if(m_backendCombo->currentData().toInt()==1){
         startOnAirReceiver();
         return;
     }
@@ -680,17 +680,24 @@ void MainWindow::startOnAirReceiver()
         });
     });
     QStringList arguments{
-        QStringLiteral("--hackrf"),
         QStringLiteral("--standard"),QStringLiteral("t2"),
         QStringLiteral("--freq"),QString::number(m_frequencyMhz->value(),'f',3),
         QStringLiteral("--bw"),QString::number(m_bandwidth->currentData().toUInt()/1.0e6,'f',0),
-        QStringLiteral("--lna"),QString::number(m_lnaGain->value()*8),
-        QStringLiteral("--vga"),QString::number(m_vgaGain->value()*2),
         QStringLiteral("--compute"),QStringLiteral("auto"),
         QStringLiteral("--udp"),QStringLiteral("127.0.0.1:%1").arg(m_udpPort->value()),
         QStringLiteral("--secs"),QStringLiteral("86400")
     };
-    if(m_rfAmp->isChecked())arguments<<QStringLiteral("--amp");
+    if(m_iqPath.isEmpty()){
+        arguments<<QStringLiteral("--hackrf")
+                 <<QStringLiteral("--lna")<<QString::number(m_lnaGain->value()*8)
+                 <<QStringLiteral("--vga")<<QString::number(m_vgaGain->value()*2);
+        if(m_rfAmp->isChecked())arguments<<QStringLiteral("--amp");
+    } else {
+        arguments<<QStringLiteral("--file")<<m_iqPath
+                 <<QStringLiteral("--format")<<QStringLiteral("cs8")
+                 <<QStringLiteral("--rate")
+                 <<QString::number(m_sampleRate->currentData().toDouble()/1e6,'f',9);
+    }
     if(!m_udpEnabled->isChecked())m_udpEnabled->setChecked(true);
     process->start(cli,arguments,QIODevice::ReadOnly);
     if(!process->waitForStarted(5000)){
@@ -706,8 +713,9 @@ void MainWindow::startOnAirReceiver()
     m_pipeline->setText(QStringLiteral("Независимый DVB-T2 декодер: OnAir 3.0.0; MPEG-TS передаётся в VLC через UDP."));
     m_serviceCombo->clear();
     m_serviceCombo->addItem(QStringLiteral("Весь мультиплекс (OnAir)"),-1);
-    appendLog(QStringLiteral("OnAir запущен: %1 МГц, UDP 127.0.0.1:%2, HackRF Pro.")
-        .arg(m_frequencyMhz->value(),0,'f',3).arg(m_udpPort->value()));
+    appendLog(QStringLiteral("OnAir запущен: %1 МГц, UDP 127.0.0.1:%2, источник: %3.")
+        .arg(m_frequencyMhz->value(),0,'f',3).arg(m_udpPort->value())
+        .arg(m_iqPath.isEmpty()?QStringLiteral("HackRF Pro"):m_iqPath));
     appendLog(QStringLiteral("Отдельный DVB-T2 декодер передаёт MPEG-TS в VLC. "
                              "Усиление в режиме OnAir применяется после перезапуска приёма."));
     // Start playback immediately: VLC can wait for PAT/PMT while the
