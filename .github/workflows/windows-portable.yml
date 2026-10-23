@@ -284,6 +284,40 @@ jobs:
           $dst = Join-Path $PWD 'build-portable/HackRFT2Viewer-Portable-1.4.2-RC3/vlc'
           Copy-Item -Recurse -Force $src $dst
 
+      - name: Bundle OnAir 3.0.0 real-world DVB-T2 receiver and command line interface
+        shell: pwsh
+        timeout-minutes: 8
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = 'https://github.com/adswill/OnAir/releases/download/v3.0.0/'
+          $archiveName = 'OnAir-3.0.0-windows-x64.zip'
+          $zip = Join-Path $env:RUNNER_TEMP $archiveName
+          $sums = Join-Path $env:RUNNER_TEMP 'onair-sha256sums.txt'
+          Invoke-WebRequest -Uri ($base + $archiveName) -OutFile $zip
+          Invoke-WebRequest -Uri ($base + 'SHA256SUMS') -OutFile $sums
+          $entry = Get-Content $sums | Where-Object { $_ -match [regex]::Escape($archiveName) } | Select-Object -First 1
+          if (-not $entry -or $entry -notmatch '^([0-9A-Fa-f]{64})\s+\*?') {
+              throw "Cannot verify the OnAir release checksum: $entry"
+          }
+          $expected = $Matches[1].ToLowerInvariant()
+          $actual = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "OnAir release checksum mismatch: $actual" }
+          if ((Get-Item $zip).Length -lt 90000000) { throw 'OnAir archive size unexpectedly small' }
+          $tmp = Join-Path $env:RUNNER_TEMP 'onair-extract'
+          Expand-Archive -Path $zip -DestinationPath $tmp -Force
+          $src = Join-Path $tmp 'OnAir-3.0.0-windows-x64'
+          if (-not (Test-Path (Join-Path $src 'onair-cli.exe'))) { throw 'OnAir CLI missing' }
+          $dst = Join-Path $PWD 'build-portable/HackRFT2Viewer-Portable-1.4.2-RC3/OnAir'
+          Copy-Item -Recurse -Force $src $dst
+          if (-not (Test-Path (Join-Path $dst 'OnAir.exe'))) { throw 'OnAir GUI missing' }
+          # Prove that the packaged CLI can start without a radio attached.
+          Push-Location $dst
+          try {
+              & (Join-Path $dst 'onair-cli.exe') --version
+              if ($LASTEXITCODE -ne 0) { throw "OnAir CLI --version failed with $LASTEXITCODE" }
+          } finally { Pop-Location }
+          Write-Host "OnAir 3.0.0 bundled and checked ($((Get-Item $zip).Length) archive bytes)"
+
       - name: Download independently verified RF fixture
         uses: actions/download-artifact@v8
         with:
