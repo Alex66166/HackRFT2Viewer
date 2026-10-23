@@ -12,6 +12,57 @@ on:
       - 'tests/probe_real_iq.py'
       - '.github/workflows/real-iq-sample.yml'
 jobs:
+  independent-onair-reference:
+    name: Compare real broadcast IQ with independent OnAir receiver
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download genuine 546 MHz DVB-T2 IQ and OnAir release
+        run: |
+          set -euo pipefail
+          mkdir -p reference/input
+          curl -fSL --retry 2 --max-time 120 'https://www.radioscanner.ru/files/download/file18613/t2.rar' -o reference/t2.rar
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends 7zip python3-numpy
+          7z x -y -oreference/input reference/t2.rar
+          python3 tests/convert_real_iq.py reference/input/t2/_VV.CPX reference/real.cs8
+          curl -fSL --retry 2 --max-time 210 \
+            'https://github.com/adswill/OnAir/releases/download/v3.0.0/onair-3.0.0-linux-x86_64-portable.tar.gz' \
+            -o reference/onair.tar.gz
+          mkdir -p reference/onair
+          tar -xzf reference/onair.tar.gz -C reference/onair
+          find reference/onair -type f \( -name onair-cli -o -name dect2cli \) -print
+      - name: Replay real sample using independent OnAir 3.0.0
+        shell: bash
+        run: |
+          set +e
+          cli="$(find reference/onair -type f -name onair-cli -print -quit)"
+          if [ -z "$cli" ]; then find reference/onair -maxdepth 3 -type f | head -70; exit 2; fi
+          chmod +x "$cli"
+          "$cli" --version
+          cd "$(dirname "$cli")"
+          "$(basename "$cli" | sed 's!^!./!')" \
+            --file "$GITHUB_WORKSPACE/reference/real.cs8" \
+            --format cs8 --rate 9.142857142857143 --freq 546.0047 \
+            --standard t2 --bw 8 --secs 5 --compute cpu \
+            --ts "$GITHUB_WORKSPACE/reference/onair.ts" \
+            > "$GITHUB_WORKSPACE/reference/onair.log" 2>&1
+          code=$?
+          tail -120 "$GITHUB_WORKSPACE/reference/onair.log"
+          echo "OnAir exit=$code, TS bytes=$(stat -c%s "$GITHUB_WORKSPACE/reference/onair.ts" 2>/dev/null || echo 0)" > "$GITHUB_WORKSPACE/reference/summary.txt"
+          if [ "$code" -ne 0 ]; then exit "$code"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Independent-OnAir-Real-546MHz-IQ-Results
+          path: |
+            reference/onair.log
+            reference/onair.ts
+            reference/summary.txt
+          retention-days: 7
+          if-no-files-found: warn
+
   real-iq-replay:
     name: Native receiver acquisition on real 546 MHz RF
     runs-on: ubuntu-24.04
