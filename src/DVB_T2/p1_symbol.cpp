@@ -107,6 +107,7 @@ bool p1_symbol::execute(float _level_detect, const int _len_in, complex *_in, in
         out = a * out_av_b;
         const float energy = energy_now(norm(data_sihft)) * energy_delayed(norm(b));
         const float correlation = energy>1.0e-18f ? norm(out_av_b)/energy : 0.0f;
+        bestCorrelation=std::max(bestCorrelation,correlation);
         cor.real(correlation);
         cor_buffer.write(cor);
         if(correlation > begin_threshold) {
@@ -129,6 +130,7 @@ bool p1_symbol::execute(float _level_detect, const int _len_in, complex *_in, in
             if(correlation < end_threshold) {
 
                 p1_detect = true;
+                ++detectedCandidates;
 
                 complex *buff = p1_buffer.read();
 
