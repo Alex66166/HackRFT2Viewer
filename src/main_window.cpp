@@ -1117,6 +1117,16 @@ void MainWindow::exportDiagnostics()
 
 void MainWindow::startScan()
 {
+    // OnAir currently streams TS directly to VLC. Its services are not fed
+    // into the built-in scanner, so reporting "no channels found" would be
+    // misleading. Keep scan reserved for the internal DVB-T2 engine.
+    if(isOnAirActive()){
+        QMessageBox::information(this,QStringLiteral("Сканирование"),
+            QStringLiteral("Сканер DVB-T2 сейчас работает только со встроенным DSP. "
+                           "Для режима OnAir используйте настройку ТВК вручную "
+                           "или полнофункциональный OnAir.exe в подпапке OnAir."));
+        return;
+    }
     if(m_scanning) {
         m_scanning = false;m_scanTimer.stop();
         m_scanButton->setText(QStringLiteral("Сканировать UHF 21–69"));
