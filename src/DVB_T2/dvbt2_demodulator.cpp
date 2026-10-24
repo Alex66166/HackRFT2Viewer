@@ -245,8 +245,34 @@ void dvbt2_demodulator::symbol_acquisition(int _len_in, complex* _in, signal_est
                     }
                 }
                 if(p1_decoded){
-                    if(std::abs(signal_->coarse_freq_offset)>100.0){
-                        signal_->change_frequency=true;return;
+                    if(std::abs(signal_->coarse_freq_offset)>100.0) {
+                        // A first clean P1 may be the only preamble in a short
+                        // real-air capture. Previously the whole P2 region was
+                        // discarded and frequency correction took effect only
+                        // on the NEXT P1, losing L1 for one entire T2 frame.
+                        // Correct the partial P2 samples saved by P1 as well
+                        // as the yet-unconsumed resampled samples in place.
+                        const double coarseHz=signal_->coarse_freq_offset;
+                        const double correctStep=-2.0*M_PI*coarseHz/SAMPLE_RATE;
+                        double correctedPhase=0.0;
+                        if(idx_buffer_sym>0)
+                            rotate_samples(buffer_sym,buffer_sym,idx_buffer_sym,
+                                           correctedPhase,correctStep);
+                        if(consume<len_in)
+                            rotate_samples(in+consume,in+consume,len_in-consume,
+                                           correctedPhase,correctStep);
+                        // All input samples for this chunk were rotated
+                        // earlier. Continue the same digital correction on
+                        // the NEXT raw-input chunk, preserving NCO phase.
+                        frequency_nco=std::remainder(frequency_nco+correctedPhase,
+                                                     2.0*M_PI);
+                        frequency_est_filtered+=float(2.0*M_PI*coarseHz/sample_rate);
+                        signal_->coarse_freq_offset=0.0;
+                        signal_->change_frequency=false;
+                        if(p1Matches<=2)
+                            emit receiver_stage(QStringLiteral(
+                                "P1: частотное смещение %1 Гц исправлено до P2.")
+                                .arg(coarseHz,0,'f',1));
                     }
                     if(!p2_init)init_dvbt2();
                     next_symbol_type=SYMBOL_TYPE_P2;
