@@ -38,6 +38,8 @@ public:
     explicit p1_symbol(QObject *parent = nullptr);
     ~p1_symbol() override;
 
+    quint64 detectedCandidates=0;
+    float bestCorrelation=0.0f;
     void restart(){reset_buffer();p1_buffer.reset();cor_buffer.reset();consume_p1=0;idx_fq_shift=0;p1_decoded=false;}
     bool execute(float _level_detect, const int _len_in, complex *_in, int &_consume, bool _symbol_synchronize,
                  complex* _buffer_sym, int &_idx_buffer_sym,
