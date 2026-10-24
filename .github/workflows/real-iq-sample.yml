@@ -85,6 +85,16 @@ jobs:
           code=$?
           tail -120 real-iq/replay.log
           echo "Offline replay exit code: $code" | tee real-iq/summary.txt
+          python3 - real-iq/replay.log <<'PY'
+          import re,sys
+          log=open(sys.argv[1],encoding='utf-8',errors='replace').read()
+          m=re.search(r'P1/candidates/failedSignalling/L1pre/L1post\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)',log)
+          assert m, 'No raw P1/L1 stage counters: receiver did not execute'
+          p1,candidates,failed,pre,post=map(int,m.groups())
+          print(f'Genuine 546MHz RF L1 regression: P1={p1}, candidates={candidates}, L1pre={pre}, L1post={post}')
+          assert p1>=1 and pre>=1 and post>=1, 'Real-air P1-to-P2 AFC/CRC regression'
+          assert re.search(r'drops 0 ',log), 'Unexpected input queue drops'
+          PY
           python3 tests/replay_real_iq_variants.py real-iq/real.cs8 real-iq/variants
           for hypothesis in real-iq/variants/*.cs8; do
             name="$(basename "$hypothesis" .cs8)"
