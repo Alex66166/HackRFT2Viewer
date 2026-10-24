@@ -46,6 +46,8 @@ private:
     void populateChannels();
     void connectUi();
     void connectDemodulator();
+    void startOnAirReceiver();
+    bool isOnAirActive() const;
     void setRunningUi(bool running);
     void appendLog(const QString &message);
     HackRfSettings settingsFromUi() const;
@@ -83,6 +85,8 @@ private:
     QThread m_radioThread;
     bb_de_header *m_transport = nullptr;
     QProcess *m_vlc = nullptr;
+    QProcess *m_onair = nullptr;
+    QByteArray m_onairPartialLog;
     HackRfDeviceInfo m_deviceInfo;
     RadioMetrics m_radioMetrics;
     TransportMetrics m_transportMetrics;
@@ -103,6 +107,7 @@ private:
     QDoubleSpinBox *m_frequencyMhz = nullptr;
     QComboBox *m_sampleRate = nullptr;
     QComboBox *m_bandwidth = nullptr;
+    QComboBox *m_backendCombo = nullptr;
     QPushButton *m_refreshButton = nullptr;
     QPushButton *m_startButton = nullptr;
     QPushButton *m_stopButton = nullptr;

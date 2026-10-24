@@ -17,6 +17,8 @@
  #include <QDebug>
 
 #include "DSP/fast_math.h"
+#include <array>
+#include <algorithm>
 
 #define P1_HERTZ_PER_RADIAN (HERTZ_PER_RADIAN / P1_A_PART)
 
@@ -105,6 +107,7 @@ bool p1_symbol::execute(float _level_detect, const int _len_in, complex *_in, in
         out = a * out_av_b;
         const float energy = energy_now(norm(data_sihft)) * energy_delayed(norm(b));
         const float correlation = energy>1.0e-18f ? norm(out_av_b)/energy : 0.0f;
+        bestCorrelation=std::max(bestCorrelation,correlation);
         cor.real(correlation);
         cor_buffer.write(cor);
         if(correlation > begin_threshold) {
@@ -127,6 +130,7 @@ bool p1_symbol::execute(float _level_detect, const int _len_in, complex *_in, in
             if(correlation < end_threshold) {
 
                 p1_detect = true;
+                ++detectedCandidates;
 
                 complex *buff = p1_buffer.read();
 
@@ -146,16 +150,47 @@ bool p1_symbol::execute(float _level_detect, const int _len_in, complex *_in, in
                 p1_fft = fft->execute();
                 double coarse_freq_offset = std::arg(arg_max) * (double)P1_HERTZ_PER_RADIAN;
                 p1_decoded=false;
-                {
-                    for(int shift = 80; shift < 92; ++shift) { // +- 90kHz (one shift +- 8928,5Hz)
-                        complex* p1= p1_fft + shift;
-                        if(demodulate(p1, _dvbt2)) {
-                            p1_decoded = true;
-                            if(shift != first_active_carrier) {
-                                coarse_freq_offset += (double)(shift - first_active_carrier) * (double)P1_CARRIER_SPASING;
-                            }
-                            break;
+                // The DBPSK P1 signalling may fail even with a nearly
+                // perfect P1 correlation when the RF oscillator sits between
+                // OFDM FFT bins. A real 546 MHz 32K/1/16 capture showed
+                // S1/S2 Hamming distances 20/47 before derotation, but 0/0
+                // after compensating +0.25..+0.5 P1-carrier spacing.
+                // For this capture +0.50 concentrates 99.9% of the P1 FFT
+                // energy on active carriers; it also agrees with the
+                // independent OnAir CFO measurement within ~50 Hz.
+                // Try the normal FFT first; pay for extra 1024-point FFTs
+                // only on a *detected* P1 whose signalling failed CRC.
+                auto try_decode = [&]() {
+                    for(int shift=80;shift<92;++shift) {
+                        if(demodulate(p1_fft+shift,_dvbt2)) {
+                            p1_decoded=true;
+                            // A/B/C correlation phase already estimates
+                            // fractional CFO. FFT derotation repairs the
+                            // signalling decision only. Adding the fraction
+                            // here again double-counts it: on the real
+                            // 546 MHz capture that caused a 4.46 kHz error.
+                            coarse_freq_offset +=
+                                double(shift-first_active_carrier)
+                                *double(P1_CARRIER_SPASING);
+                            return true;
                         }
+                    }
+                    return false;
+                };
+                if(!try_decode()) {
+                    std::array<complex,P1_A_PART> original;
+                    std::copy_n(in_fft,P1_A_PART,original.begin());
+                    constexpr float fractional_bins[]={0.50f,-0.50f,0.25f,-0.25f};
+                    for(float bin:fractional_bins) {
+                        const complex step=std::polar(1.0f,
+                            -float(M_PI_X_2)*bin/float(P1_A_PART));
+                        complex phase(1.0f,0.0f);
+                        for(int i=0;i<P1_A_PART;++i) {
+                            in_fft[i]=original[i]*phase;
+                            phase*=step;
+                        }
+                        p1_fft=fft->execute();
+                        if(try_decode())break;
                     }
                 }
                 _p1_decoded = p1_decoded;

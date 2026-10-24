@@ -1,0 +1,204 @@
+name: Probe independent real DVB-T2 IQ sample
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: real-iq-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  independent-onair-reference:
+    name: Compare real broadcast IQ with independent OnAir receiver
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download genuine 546 MHz DVB-T2 IQ and OnAir release
+        run: |
+          set -euo pipefail
+          mkdir -p reference/input
+          curl -fSL --retry 2 --max-time 120 'https://www.radioscanner.ru/files/download/file18613/t2.rar' -o reference/t2.rar
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends 7zip python3-numpy
+          7z x -y -oreference/input reference/t2.rar
+          python3 tests/convert_real_iq.py reference/input/t2/_VV.CPX reference/real.cs8
+          curl -fSL --retry 2 --max-time 210 \
+            'https://github.com/adswill/OnAir/releases/download/v3.0.0/onair-3.0.0-linux-x86_64-portable.tar.gz' \
+            -o reference/onair.tar.gz
+          mkdir -p reference/onair
+          tar -xzf reference/onair.tar.gz -C reference/onair
+          find reference/onair -type f \( -name onair-cli -o -name dect2cli \) -print
+      - name: Replay real sample using independent OnAir 3.0.0
+        shell: bash
+        run: |
+          set +e
+          cli="$(find reference/onair -type f -name onair-cli -print -quit)"
+          if [ -z "$cli" ]; then find reference/onair -maxdepth 3 -type f | head -70; exit 2; fi
+          chmod +x "$cli"
+          "$cli" --version
+          cd "$(dirname "$cli")"
+          "$(basename "$cli" | sed 's!^!./!')" \
+            --file "$GITHUB_WORKSPACE/reference/real.cs8" \
+            --format cs8 --rate 9.142857142857143 --freq 546.0047 \
+            --standard t2 --bw 8 --secs 5 --compute cpu \
+            --ts "$GITHUB_WORKSPACE/reference/onair.ts" \
+            > "$GITHUB_WORKSPACE/reference/onair.log" 2>&1
+          code=$?
+          tail -120 "$GITHUB_WORKSPACE/reference/onair.log"
+          echo "OnAir exit=$code, TS bytes=$(stat -c%s "$GITHUB_WORKSPACE/reference/onair.ts" 2>/dev/null || echo 0)" > "$GITHUB_WORKSPACE/reference/summary.txt"
+          if [ "$code" -ne 0 ]; then exit "$code"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Independent-OnAir-Real-546MHz-IQ-Results
+          path: |
+            reference/onair.log
+            reference/onair.ts
+            reference/summary.txt
+          retention-days: 7
+          if-no-files-found: warn
+
+  real-iq-replay:
+    name: Native receiver acquisition on real 546 MHz RF
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the native DVB-T2 receiver build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential qtbase5-dev qtbase5-dev-tools libfftw3-dev libusb-1.0-0-dev ripgrep python3-numpy 7zip
+      - name: Download and convert true 64/7 Msps real RF
+        run: |
+          mkdir -p real-iq/raw
+          curl -fSL --retry 2 --connect-timeout 15 --max-time 120 'https://www.radioscanner.ru/files/download/file18613/t2.rar' -o real-iq/t2.rar
+          7z x -y -oreal-iq/raw real-iq/t2.rar
+          python3 tests/convert_real_iq.py real-iq/raw/t2/_VV.CPX real-iq/real.cs8 --rate 9142857.142857143
+      - name: Build real receiver and replay input as genuine DVB-T2 I/Q
+        shell: bash
+        run: |
+          set +e
+          QT_NATIVE=/usr SANITIZE=0 TESTS=iq_replay_test NO_GUI=1 \
+            bash build-tests-native.sh real-iq/real.cs8 real-iq/output.ts 9142857.142857143 > real-iq/replay.log 2>&1
+          code=$?
+          tail -120 real-iq/replay.log
+          echo "Offline replay exit code: $code" | tee real-iq/summary.txt
+          python3 - real-iq/replay.log <<'PY'
+          import re,sys
+          log=open(sys.argv[1],encoding='utf-8',errors='replace').read()
+          m=re.search(r'P1/candidates/failedSignalling/L1pre/L1post\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)',log)
+          assert m, 'No raw P1/L1 stage counters: receiver did not execute'
+          p1,candidates,failed,pre,post=map(int,m.groups())
+          print(f'Genuine 546MHz RF L1 regression: P1={p1}, candidates={candidates}, L1pre={pre}, L1post={post}')
+          assert p1>=1 and pre>=1 and post>=1, 'Real-air P1-to-P2 AFC/CRC regression'
+          assert re.search(r'drops 0 ',log), 'Unexpected input queue drops'
+          PY
+          python3 tests/replay_real_iq_variants.py real-iq/real.cs8 real-iq/variants
+          for hypothesis in real-iq/variants/*.cs8; do
+            name="$(basename "$hypothesis" .cs8)"
+            build-native/iq_replay_test "$hypothesis" "real-iq/variants/$name.ts" 9142857.142857143 \
+              > "real-iq/variants/$name.log" 2>&1
+            result=$?
+            echo "$name replay exit=$result" | tee -a real-iq/summary.txt
+            grep -E 'RESULT bytes|P1/L1pre/L1post' "real-iq/variants/$name.log" | tail -3 || true
+            if [ "$result" != 0 ] && [ "$result" != 3 ]; then exit "$result"; fi
+          done
+          # This 113-ms capture may not include the full PLP frame;
+          # no TS (exit 3) is an honest observation, not a test pass.
+          if [ "$code" != 0 ] && [ "$code" != 3 ]; then exit "$code"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Native-replay-real-546MHz-logs-and-binary
+          path: |
+            real-iq/replay.log
+            real-iq/summary.txt
+            real-iq/variants/*.log
+            real-iq/output.ts
+            real-iq/output.ts.profile.csv
+            build-native/iq_replay_test
+          retention-days: 7
+          if-no-files-found: warn
+
+  real-iq-probe:
+    name: Download and inspect Russian DVB-T2 RF I/Q
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download published 2015 over-the-air Russian DVB-T2 capture
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p real-iq/raw
+          curl --fail --location --retry 2 --connect-timeout 15 --max-time 120 \
+            --user-agent 'Mozilla/5.0 HackRFT2Viewer CI receiver research' \
+            'https://www.radioscanner.ru/files/download/file18613/t2.rar' \
+            --output real-iq/t2.rar
+          test "$(stat -c%s real-iq/t2.rar)" -gt 1000000
+          test "$(stat -c%s real-iq/t2.rar)" -lt 25000000
+          sha256sum real-iq/t2.rar
+          file real-iq/t2.rar
+      - name: Inspect archive without running contents
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends 7zip python3-numpy
+          7z l -slt real-iq/t2.rar | head -220
+          7z x -y -oreal-iq/raw real-iq/t2.rar
+          du -ah real-iq/raw | tail -30
+          test "$(du -sb real-iq/raw | cut -f1)" -lt 300000000
+          python3 tests/probe_real_iq.py real-iq/raw
+      - name: Locate longer public OnAir DVB-T2 IQ samples
+        run: |
+          python3 - <<'PY'
+          import re, urllib.request
+          url='https://files.on-air.dev/'
+          try:
+              req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0'})
+              with urllib.request.urlopen(req,timeout=20) as r:
+                  html=r.read(200000).decode('utf-8','replace')
+                  print('ON-AIR LIBRARY',r.status,'HTML',len(html),'FINAL',r.url)
+                  for match in re.findall(r'.{0,90}(?:dvb.?t2|\.sigmf|\.cs8|/api/).{0,140}',html,re.I)[:30]:print(match)
+                  print('LIBRARY TAGS:',re.findall(r'href="/\\?tag=([^"]+)"',html))
+                  print('LIBRARY ITEMS:',re.findall(r'href="/(?:sample|s)/([^"]+)"',html)[:40])
+                  print('HTML HEAD',html[:1500])
+              for query in ('?tag=dvb-t2','?q=dvb-t2'):
+                  try:
+                      with urllib.request.urlopen(urllib.request.Request(url+query,headers={'User-Agent':'Mozilla/5.0'}),timeout=20) as response:
+                          result=response.read(200000).decode('utf-8','replace')
+                          print('QUERY',query,'size',len(result),'contains T2',bool(re.search('DVB.T2',result,re.I)))
+                          print('QUERY CONTENT',re.sub(r'<[^>]+>',' ',result)[:1400])
+                  except Exception as exc: print('QUERY FAIL',query,repr(exc))
+          except Exception as e: print('ON-AIR LIBRARY UNREACHABLE',repr(e))
+          PY
+      - name: Inspect independently validated OnAir Windows reference receiver release
+        run: |
+          python3 - <<'PY'
+          import json, urllib.request
+          url='https://api.github.com/repos/adswill/OnAir/releases/latest'
+          try:
+              req=urllib.request.Request(url,headers={'Accept':'application/vnd.github+json','User-Agent':'HackRFT2Viewer-CI'})
+              with urllib.request.urlopen(req,timeout=25) as r: data=json.load(r)
+              print('ONAIR RELEASE',data.get('tag_name'))
+              for x in data.get('assets',[]):
+                  print('ONAIR ASSET',x['name'],x['size'],x['browser_download_url'])
+          except Exception as e: print('ONAIR RELEASE ERROR',repr(e))
+          PY
+      - name: Verify whether known-working OnAir Windows package includes a CLI receiver
+        run: |
+          curl --fail --location --retry 2 --connect-timeout 15 --max-time 210 \
+            'https://github.com/adswill/OnAir/releases/download/v3.0.0/OnAir-3.0.0-windows-x64.zip' \
+            -o /tmp/onair-windows.zip
+          echo "OnAir 3.0.0 Windows archive size $(stat -c%s /tmp/onair-windows.zip)"
+          unzip -Z -1 /tmp/onair-windows.zip | grep -Ei '(onair-cli|dect2cli|onair.exe|license|copying|readme|\.exe$)' | head -60
+      - name: Retain real RF reference capture
+        uses: actions/upload-artifact@v4
+        with:
+          name: Real-DVB-T2-Russia-546MHz-IQ-original
+          path: real-iq/
+          retention-days: 7
+          if-no-files-found: error
