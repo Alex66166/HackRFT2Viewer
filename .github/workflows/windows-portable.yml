@@ -97,8 +97,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends 7zip
           7z x -y -o"$RUNNER_TEMP/real-rf" "$RUNNER_TEMP/real-rf/t2.rar"
           python3 tests/convert_real_iq.py "$RUNNER_TEMP/real-rf/t2/_VV.CPX" "$RUNNER_TEMP/real-rf/real.cs8"
-          timeout 45 build-native/iq_replay_test "$RUNNER_TEMP/real-rf/real.cs8" "$RUNNER_TEMP/real-rf/recovered.ts" 9142857.142857143 > "$RUNNER_TEMP/real-rf/replay.log" 2>&1
-          code=$?
+          if timeout 45 build-native/iq_replay_test "$RUNNER_TEMP/real-rf/real.cs8" "$RUNNER_TEMP/real-rf/recovered.ts" 9142857.142857143 > "$RUNNER_TEMP/real-rf/replay.log" 2>&1; then
+            code=0
+          else
+            code=$?
+          fi
           tail -100 "$RUNNER_TEMP/real-rf/replay.log"
           if [ "$code" -eq 4 ]; then echo 'FAIL: unexpected real capture buffer drops'; exit 4; fi
           if [ "$code" -ne 0 ] && [ "$code" -ne 3 ]; then exit "$code"; fi
