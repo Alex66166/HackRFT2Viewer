@@ -1,5 +1,8 @@
 # HackRF T2 Viewer 1.4.2-RC3 — portable
 
+**Всегда актуальная скомпилированная Windows-сборка:** [GitHub Releases — latest](https://github.com/Alex66166/HackRFT2Viewer/releases/latest). Прямая ссылка на архив: [HackRFT2Viewer-Portable-Windows-x64.zip](https://github.com/Alex66166/HackRFT2Viewer/releases/latest/download/HackRFT2Viewer-Portable-Windows-x64.zip). После успешных тестов нового коммита в ветке `main` GitHub Actions обновляет **один постоянный Release `latest`** и заменяет исполняемый архив вместе с SHA256SUMS.txt. Старые исходные коммиты в `main` при этом не удаляются. Пока тесты новой версии не пройдены, в релизе остаётся последний **успешно собранный** коммит.
+
+
 **Статус RC:** исправлены подтверждённые ошибки FEC и очередей, добавлена сохраняемая диагностика. На предоставленной эфирной записи TS пока не восстановлен; рабочий приём ТВ и отсутствие перегрузок на оборудовании не подтверждены. Подробности — [VALIDATION.md](VALIDATION.md), сборки — во вкладке Actions.
 
 Распакуйте архив целиком в отдельную папку и запустите HackRFT2Viewer.exe.
