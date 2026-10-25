@@ -195,6 +195,8 @@ jobs:
   build-windows:
     needs: native-tests
     runs-on: windows-latest
+    permissions:
+      contents: write
     defaults:
       run:
         shell: msys2 {0}
