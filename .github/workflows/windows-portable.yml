@@ -488,3 +488,13 @@ jobs:
           }
           Write-Host "Updated Release latest => $sha"
 
+          # Keep exactly one published Release. Historical *commits* are
+          # preserved in main; only old release entries/tags are retired.
+          $existing = @(gh release list --repo "$env:GITHUB_REPOSITORY" --limit 100 --json tagName --jq '.[].tagName')
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect previous releases' }
+          foreach ($oldTag in $existing) {
+            if ($oldTag -eq 'latest' -or [string]::IsNullOrWhiteSpace($oldTag)) { continue }
+            gh release delete "$oldTag" --repo "$env:GITHUB_REPOSITORY" --yes --cleanup-tag
+            if ($LASTEXITCODE -ne 0) { throw "Could not retire old release: $oldTag" }
+          }
+
