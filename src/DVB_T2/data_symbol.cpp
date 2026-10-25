@@ -17,6 +17,7 @@
 #include <QDebug>
 
 #include "DSP/fast_math.h"
+#include "DSP/pilot_equalizer.h"
 
 //-------------------------------------------------------------------------------------------
 data_symbol::data_symbol(QObject* parent) : QObject(parent)
@@ -137,7 +138,6 @@ complex* data_symbol::execute(int _idx_symbol, complex* _ofdm_cell,
     float amp_pilot = amp_sp;
     complex cell;
     complex old_cell = {0.0, 0.0};
-    complex derotate;
     int idx_data = 0;
     int d = 0;
     int* h;
@@ -202,16 +202,9 @@ complex* data_symbol::execute(int _idx_symbol, complex* _ofdm_cell,
             amp = sqrtf(norm(cell)) / amp_pilot;
             amp_pilot = amp_sp;
             delta_amp = (amp - amp_est) / (idx_data + 1);
-            for(int j = 0; j < idx_data; ++j){
-                angle_est += delta_angle;
-                amp_est += delta_amp;
-//                derotate.real(cos_lut(angle_est) / amp_est);
-//                derotate.imag(sin_lut(angle_est) / amp_est);
-                derotate.real(cosf(angle_est) / amp_est);
-                derotate.imag(sinf(angle_est) / amp_est);
-                deinterleaved_cell[h[d]] = buffer_cell[j] * conj(derotate);
-                ++d;
-            }
+            fast_equalize_pilot_gap(buffer_cell, deinterleaved_cell, h + d, idx_data,
+                                    angle_est, delta_angle, amp_est, delta_amp);
+            d += idx_data;
             idx_data = 0;
             angle_est = angle;
             amp_est = amp;
@@ -301,16 +294,9 @@ complex* data_symbol::execute(int _idx_symbol, complex* _ofdm_cell,
             amp = sqrtf(norm(cell)) / amp_pilot;
             amp_pilot = amp_sp;
             delta_amp = (amp - amp_est) / (idx_data + 1);
-            for(int j = 0; j < idx_data; ++j){
-                angle_est += delta_angle;
-                amp_est += delta_amp;
-//                derotate.real(cos_lut(angle_est) / amp_est);
-//                derotate.imag(sin_lut(angle_est) / amp_est);
-                derotate.real(cosf(angle_est) / amp_est);
-                derotate.imag(sinf(angle_est) / amp_est);
-                deinterleaved_cell[h[d]] = buffer_cell[j] * conj(derotate);
-                ++d;
-            }
+            fast_equalize_pilot_gap(buffer_cell, deinterleaved_cell, h + d, idx_data,
+                                    angle_est, delta_angle, amp_est, delta_amp);
+            d += idx_data;
             idx_data = 0;
             angle_est = angle;
             amp_est = amp;

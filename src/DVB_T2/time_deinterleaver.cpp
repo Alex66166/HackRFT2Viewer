@@ -79,6 +79,17 @@ void time_deinterleaver::start(dvbt2_parameters _dvbt2, l1_presignalling _l1_pre
     l1_post = l1_post_owner->value;
     p2_start_idx_cell = L1_PRE_CELL + l1_pre.l1_post_size;
     num_plp = l1_post.num_plp;
+    // A multiplex may carry several PLPs. Decoding all of them duplicates
+    // the most expensive LDPC/BCH work, even though the GUI plays one PLP.
+    // In automatic mode choose the first data (non-common) PLP, just as the
+    // transport parser does after its first valid TS BBFRAME.
+    int firstDataPlp = 0;
+    for (int i = 0; i < num_plp; ++i) {
+        if (l1_post.plp[i].plp_type != 0) { firstDataPlp = i; break; }
+    }
+    autoDataPlp.store(firstDataPlp, std::memory_order_relaxed);
+    if (requestedPlp.load(std::memory_order_relaxed) == -2)
+        idx_show_plp.store(firstDataPlp, std::memory_order_relaxed);
     fec_len_bits = new int[num_plp];
     bits_per_cell = new int[num_plp];
     n_ti = new int[num_plp];
@@ -312,6 +323,12 @@ void time_deinterleaver::execute(int _len_in, complex* _ofdm_cell)
     // only if the downstream pipeline genuinely cannot keep up.
     auto queueTiBlock = [this](int count, const complex *source, int index) {
         if(count <= 0 || source == nullptr || qam == nullptr) return;
+        const int request = requestedPlp.load(std::memory_order_relaxed);
+        const int selected = request == -2
+            ? autoDataPlp.load(std::memory_order_relaxed) : request;
+        // Do not allocate/copy/queue non-selected FEC frames. The TI state
+        // still advances for every PLP, so switching channels stays safe.
+        if (selected >= 0 && selected != index) return;
         auto cells = std::make_shared<std::vector<complex>>(source, source + count);
         auto post = std::make_shared<owned_l1_post>(l1_post);
         emit ti_block(count, cells->data(), index, post->value);

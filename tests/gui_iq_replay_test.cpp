@@ -30,7 +30,15 @@ public:
         const int expectedFec = fixture["expected_fec"].toInt();
         if (expectedPackets <= 0 || expectedFec <= 0) return 2;
 
-        MainWindow window; window.show(); window.m_iqPath = input;
+        MainWindow window; window.show();
+        // This is the in-process GNU Radio -> native DSP regression.
+        // Prior GUI smoke tests can save the external OnAir preference,
+        // which would otherwise start a different backend and leave
+        // m_transport null while the harness attempts a blocking invoke.
+        const int internal = window.m_backendCombo->findData(0);
+        if(internal<0) return 2;
+        window.m_backendCombo->setCurrentIndex(internal);
+        window.m_iqPath = input;
         window.m_sampleRate->setCurrentIndex(window.m_sampleRate->findData(10000000.0));
         window.m_udpEnabled->setChecked(false);
         window.startReceiver();

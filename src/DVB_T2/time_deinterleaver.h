@@ -18,6 +18,7 @@
 #include <QObject>
 #include <QThread>
 #include <QMutex>
+#include <atomic>
 
 #include "DSP/fast_fourier_transform.h"
 #include "dvbt2_definition.h"
@@ -34,7 +35,15 @@ public:
 
     void start(dvbt2_parameters _dvbt2, l1_presignalling _l1_pre, l1_postsignalling _l1_post);
     llr_demapper* qam;
-    volatile int idx_show_plp = 0;
+    // -1 decodes all PLPs (legacy/tests), -2 decodes the first data PLP,
+    // nonnegative values select a concrete L1 PLP index. Atomic because the
+    // GUI changes it while the TI worker runs in a different thread.
+    void setDecodedPlp(int index) noexcept {
+        requestedPlp.store(index, std::memory_order_relaxed);
+        const int plotIndex = index == -2 ? autoDataPlp.load(std::memory_order_relaxed) : index;
+        if (plotIndex >= 0) idx_show_plp.store(plotIndex, std::memory_order_relaxed);
+    }
+    std::atomic<int> idx_show_plp{0};
 
 signals:
     void ti_block(int _ti_block_size, complex* _time_deint_cell, int _plp_id, l1_postsignalling _l1_post);
@@ -58,7 +67,9 @@ private:
     std::shared_ptr<owned_l1_post> l1_post_owner;
     bool flag_start = false;
     int p2_start_idx_cell;
-    int num_plp;                            // PLP to decode in the receiver
+    int num_plp;                            // Number of signalled PLPs
+    std::atomic<int> requestedPlp{-1};
+    std::atomic<int> autoDataPlp{0};
     const int n_split = 5;                  // number of columns occupied by each FEC block.
     int* fec_len_bits;                      // FEC block size (16200 or 64800)
     int* bits_per_cell;                     // constellation order

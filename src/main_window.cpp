@@ -1,5 +1,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
 #include "diagnostics.h"
 /* HackRF T2 Viewer - main window, GPL-3.0-or-later */
 #include "main_window.h"
@@ -197,10 +198,17 @@ void MainWindow::buildUi()
     m_sampleRate->addItem(QStringLiteral("16 MS/s"), 16000000.0);
     m_sampleRate->addItem(QStringLiteral("20 MS/s"), 20000000.0);
     m_sampleRate->addItem(QStringLiteral("8 MS/s (экономия CPU)"), 8000000.0);
+    m_sampleRate->addItem(QStringLiteral("9.142857 MS/s (запись DVB-T2 I/Q)"), 64000000.0/7.0);
     m_bandwidth = new QComboBox;
     m_bandwidth->addItem(QStringLiteral("8 МГц"), 8000000);
     m_bandwidth->addItem(QStringLiteral("9 МГц"), 9000000);
     m_bandwidth->addItem(QStringLiteral("10 МГц"), 10000000);
+    m_backendCombo=new QComboBox;
+    m_backendCombo->addItem(QStringLiteral("Встроенный DSP (экспериментальный)"),0);
+    m_backendCombo->addItem(QStringLiteral("OnAir DVB-T2 (просмотр ТВ)"),1);
+    if(QFileInfo::exists(QCoreApplication::applicationDirPath()+QStringLiteral("/OnAir/onair-cli.exe")))
+        m_backendCombo->setCurrentIndex(1);
+    radioForm->addRow(QStringLiteral("Декодер:"),m_backendCombo);
     radioForm->addRow(QStringLiteral("I/Q поток:"), m_sampleRate);
     radioForm->addRow(QStringLiteral("Фильтр:"), m_bandwidth);
     side->addWidget(radioGroup);
@@ -469,7 +477,10 @@ void MainWindow::connectUi()
 {
     connect(m_serviceCombo,qOverload<int>(&QComboBox::activated),this,[this](int){if(m_vlc->state()!=QProcess::NotRunning)launchVlc();});
     connect(m_plpCombo,qOverload<int>(&QComboBox::activated),this,[this](int){
-        if(m_transport)QMetaObject::invokeMethod(m_transport,"select_plp",Qt::QueuedConnection,Q_ARG(int,m_plpCombo->currentData().toInt()));
+        const int selected = m_plpCombo->currentData().toInt();
+        if(m_receiver)
+            m_receiver->demodulator()->deinterleaver->setDecodedPlp(selected < 0 ? -2 : selected);
+        if(m_transport)QMetaObject::invokeMethod(m_transport,"select_plp",Qt::QueuedConnection,Q_ARG(int,selected));
         m_serviceCombo->clear();
         if(m_plpCount>0 && m_serviceCount==0)m_serviceCombo->addItem(QStringLiteral("PLP найден — ждём TS/PAT/SDT"),-2);
         else m_serviceCombo->addItem(QStringLiteral("Весь мультиплекс"),-1);
@@ -589,10 +600,14 @@ void MainWindow::refreshDevice()
 
 void MainWindow::startReceiver()
 {
-    if(m_receiver || m_radioThread.isRunning())return;
+    if(m_receiver || m_radioThread.isRunning() || isOnAirActive())return;
     const auto session=++m_session;m_radioMetrics={};m_transportMetrics={};m_snr=-99;m_serviceCount=0;m_plpCount=0;m_statsLog.start();updatePipeline();
     m_lockValue->setText(QStringLiteral("ПОИСК P1"));m_snrValue->setText(QStringLiteral("—"));m_l1Info->clear();
     m_startButton->setEnabled(false);m_stopButton->setEnabled(true);m_sampleRate->setEnabled(false);m_bandwidth->setEnabled(false);
+    if(m_backendCombo->currentData().toInt()==1){
+        startOnAirReceiver();
+        return;
+    }
     m_receiver=new RxHackRfPro(settingsFromUi());m_receiver->moveToThread(&m_radioThread);
     connect(&m_radioThread,&QThread::started,m_receiver,&RxHackRfPro::start);
     connect(m_receiver,&RxHackRfPro::radioError,this,[this,session](QString text){if(session==m_session){appendLog(QStringLiteral("ОШИБКА: ")+text);m_stopButton->setEnabled(true);}});
@@ -616,9 +631,109 @@ void MainWindow::startReceiver()
     connectDemodulator();m_radioThread.start(QThread::HighPriority);
 }
 
+bool MainWindow::isOnAirActive() const
+{
+    return m_onair && m_onair->state()!=QProcess::NotRunning;
+}
+
+void MainWindow::startOnAirReceiver()
+{
+    const QString cli=QCoreApplication::applicationDirPath()
+        +QStringLiteral("/OnAir/onair-cli.exe");
+    if(!QFileInfo(cli).isFile()){
+        appendLog(QStringLiteral("OnAir: onair-cli.exe не найден в каталоге OnAir."));
+        QMessageBox::warning(this,QStringLiteral("OnAir"),
+            QStringLiteral("Не найден OnAir/onair-cli.exe рядом с HackRFT2Viewer.exe. "
+                           "Установите полную portable-сборку или выберите встроенный DSP."));
+        setRunningUi(false);
+        return;
+    }
+    // OnAir owns the USB HackRF exclusively; do not run internal RX in
+    // parallel. A separate process isolates any LDPC overload/crash.
+    const auto session=m_session;
+    auto *process=new QProcess(this);
+    process->setWorkingDirectory(QFileInfo(cli).absolutePath());
+    process->setProcessChannelMode(QProcess::MergedChannels);
+    m_onair=process;
+    m_onairPartialLog.clear();
+    connect(process,&QProcess::readyReadStandardOutput,this,[this,session,process]{
+        if(session!=m_session)return;
+        m_onairPartialLog+=process->readAllStandardOutput();
+        if(m_onairPartialLog.size()>8192)
+            m_onairPartialLog=m_onairPartialLog.right(8192);
+        int pos=0;
+        while((pos=m_onairPartialLog.indexOf('\n'))>=0) {
+            QString line=QString::fromUtf8(m_onairPartialLog.left(pos)).trimmed();
+            m_onairPartialLog.remove(0,pos+1);
+            if(line.isEmpty())continue;
+            appendLog(QStringLiteral("OnAir: ")+line.left(600));
+            if(line.startsWith(QStringLiteral("quality:"),Qt::CaseInsensitive))
+                m_l1Info->setPlainText(line);
+        }
+    });
+    connect(process,qOverload<int,QProcess::ExitStatus>(&QProcess::finished),
+            this,[this,session](int code,QProcess::ExitStatus){
+        if(session!=m_session)return;
+        appendLog(QStringLiteral("OnAir завершился, код %1").arg(code));
+        QTimer::singleShot(0,this,[this,session]{
+            if(session==m_session)stopReceiver();
+        });
+    });
+    QStringList arguments{
+        QStringLiteral("--standard"),QStringLiteral("t2"),
+        QStringLiteral("--freq"),QString::number(m_frequencyMhz->value(),'f',3),
+        QStringLiteral("--bw"),QString::number(m_bandwidth->currentData().toUInt()/1.0e6,'f',0),
+        QStringLiteral("--compute"),QStringLiteral("auto"),
+        QStringLiteral("--udp"),QStringLiteral("127.0.0.1:%1").arg(m_udpPort->value()),
+        QStringLiteral("--secs"),QStringLiteral("86400")
+    };
+    if(m_iqPath.isEmpty()){
+        arguments<<QStringLiteral("--hackrf")
+                 <<QStringLiteral("--lna")<<QString::number(m_lnaGain->value()*8)
+                 <<QStringLiteral("--vga")<<QString::number(m_vgaGain->value()*2);
+        if(m_rfAmp->isChecked())arguments<<QStringLiteral("--amp");
+    } else {
+        arguments<<QStringLiteral("--file")<<m_iqPath
+                 <<QStringLiteral("--format")<<QStringLiteral("cs8")
+                 <<QStringLiteral("--rate")
+                 <<QString::number(m_sampleRate->currentData().toDouble()/1e6,'f',9);
+    }
+    if(!m_udpEnabled->isChecked())m_udpEnabled->setChecked(true);
+    process->start(cli,arguments,QIODevice::ReadOnly);
+    if(!process->waitForStarted(5000)){
+        appendLog(QStringLiteral("OnAir не запустился: ")+process->errorString());
+        m_onair=nullptr;
+        process->deleteLater();
+        setRunningUi(false);
+        return;
+    }
+    m_running=true;
+    setRunningUi(true);
+    m_lockValue->setText(QStringLiteral("OnAir: DVB-T2"));
+    m_pipeline->setText(QStringLiteral("Независимый DVB-T2 декодер: OnAir 3.0.0; MPEG-TS передаётся в VLC через UDP."));
+    m_serviceCombo->clear();
+    m_serviceCombo->addItem(QStringLiteral("Весь мультиплекс (OnAir)"),-1);
+    appendLog(QStringLiteral("OnAir запущен: %1 МГц, UDP 127.0.0.1:%2, источник: %3.")
+        .arg(m_frequencyMhz->value(),0,'f',3).arg(m_udpPort->value())
+        .arg(m_iqPath.isEmpty()?QStringLiteral("HackRF Pro"):m_iqPath));
+    appendLog(QStringLiteral("Отдельный DVB-T2 декодер передаёт MPEG-TS в VLC. "
+                             "Усиление в режиме OnAir применяется после перезапуска приёма."));
+    // Start playback immediately: VLC can wait for PAT/PMT while the
+    // independent receiver acquires the broadcast.
+    QTimer::singleShot(800,this,[this,session]{
+        if(session!=m_session || !isOnAirActive() || m_vlc->state()!=QProcess::NotRunning)return;
+        if(QFileInfo(m_vlcPath->text()).isFile())launchVlc();
+        else appendLog(QStringLiteral("VLC не найден: укажите vlc.exe для просмотра DVB-T2 со звуком."));
+    });
+}
+
 void MainWindow::connectDemodulator()
 {
     const auto session=m_session;auto *demod=m_receiver->demodulator();
+    // Restrict costly FEC decoding to the chosen television PLP while keeping
+    // the original all-PLP mode available to receiver regression tests.
+    const int plpSelection=m_plpCombo->currentData().toInt();
+    demod->deinterleaver->setDecodedPlp(plpSelection < 0 ? -2 : plpSelection);
     // Copy borrowed DSP pointers on their producer thread before queuing a plot update.
     auto snapshot=[this,session](plot *target,auto method){
         auto timer=std::make_shared<QElapsedTimer>();
@@ -659,6 +774,18 @@ void MainWindow::connectDemodulator()
 void MainWindow::stopReceiver()
 {
     ++m_session;m_scanTimer.stop();m_scanning=false;m_scanProgress->setVisible(false);m_scanButton->setText(QStringLiteral("Сканировать UHF 21–69"));
+    if(m_onair){
+        auto *process=m_onair;m_onair=nullptr;
+        process->disconnect(this);
+        if(process->state()!=QProcess::NotRunning){
+            process->terminate();
+            if(!process->waitForFinished(1500))process->kill();
+            process->waitForFinished(500);
+        }
+        process->deleteLater();
+        if(m_vlc && m_vlc->state()!=QProcess::NotRunning)
+            m_vlc->kill();
+    }
     if(m_receiver){auto *receiver=m_receiver;QMetaObject::invokeMethod(receiver,[receiver]{receiver->stop();delete receiver;},Qt::BlockingQueuedConnection);m_radioThread.quit();m_radioThread.wait();}
     m_receiver=nullptr;m_transport=nullptr;m_running=false;m_recording=false;m_plpCount=0;m_recordButton->setText(QStringLiteral("● Начать запись .ts"));m_lockValue->setText(QStringLiteral("СТОП"));setRunningUi(false);
 }
@@ -670,6 +797,7 @@ void MainWindow::setRunningUi(bool running)
     m_refreshButton->setEnabled(!running);
     m_sampleRate->setEnabled(!running);
     m_bandwidth->setEnabled(!running);
+    m_backendCombo->setEnabled(!running);
     m_deviceStatus->setText(running ? QStringLiteral("● приём работает")
                                     : QStringLiteral("● приём остановлен"));
     m_deviceStatus->setStyleSheet(running
@@ -684,7 +812,7 @@ void MainWindow::tuneSelectedChannel()
 
 void MainWindow::tuneFrequency(quint64 frequencyHz)
 {
-    bool restart=m_receiver!=nullptr,scanning=m_scanning;if(restart)stopReceiver();
+    bool restart=m_receiver!=nullptr || isOnAirActive(),scanning=m_scanning;if(restart)stopReceiver();
     {QSignalBlocker block(m_channelCombo);m_channelCombo->setCurrentIndex(m_channelCombo->findData(frequencyHz));}
     m_scanning=scanning;m_frequencyMhz->setValue(frequencyHz/1e6);m_snr=-99;m_serviceCount=0;m_pendingService=-1;
     m_plpCount=0;
@@ -851,7 +979,7 @@ void MainWindow::launchVlc()
                              QStringLiteral("Включите вывод транспортного потока в UDP."));
         return;
     }
-    if(m_serviceCount<=0) {
+    if(m_serviceCount<=0 && !isOnAirActive()) {
         QMessageBox::information(this, QStringLiteral("VLC"),
                                  QStringLiteral("Каналы ещё не обнаружены. Дождитесь состояния TS LOCK и списка сервисов; одного L1/PLP недостаточно для воспроизведения."));
         return;
@@ -989,6 +1117,16 @@ void MainWindow::exportDiagnostics()
 
 void MainWindow::startScan()
 {
+    // OnAir currently streams TS directly to VLC. Its services are not fed
+    // into the built-in scanner, so reporting "no channels found" would be
+    // misleading. Keep scan reserved for the internal DVB-T2 engine.
+    if(isOnAirActive()){
+        QMessageBox::information(this,QStringLiteral("Сканирование"),
+            QStringLiteral("Сканер DVB-T2 сейчас работает только со встроенным DSP. "
+                           "Для режима OnAir используйте настройку ТВК вручную "
+                           "или полнофункциональный OnAir.exe в подпапке OnAir."));
+        return;
+    }
     if(m_scanning) {
         m_scanning = false;m_scanTimer.stop();
         m_scanButton->setText(QStringLiteral("Сканировать UHF 21–69"));
@@ -1067,24 +1205,72 @@ void MainWindow::updatePipeline()
 }
 void MainWindow::loadIq()
 {
-    QString path=QFileDialog::getOpenFileName(this,QStringLiteral("I/Q signed int8 I,Q. Задайте исходную частоту дискретизации."),QString(),QStringLiteral("I/Q (*.cs8 *.iq);;Все файлы (*)"));
+    const QString path=QFileDialog::getOpenFileName(
+        this,QStringLiteral("I/Q: signed 8-bit I,Q (CS8 / SigMF ci8)"),QString(),
+        QStringLiteral("I/Q (*.cs8 *.iq *.sigmf-data);;Все файлы (*)"));
     if(path.isEmpty())return;
-    stopReceiver();
-    QFile metadata(path+QStringLiteral(".json"));
+    const bool sigmf=path.endsWith(QStringLiteral(".sigmf-data"),Qt::CaseInsensitive);
+    const QString metadataPath=sigmf
+        ? path.left(path.size()-QStringLiteral(".sigmf-data").size())+QStringLiteral(".sigmf-meta")
+        : path+QStringLiteral(".json");
+    double rate=0.0,frequency=0.0;
+    QFile metadata(metadataPath);
     if(metadata.open(QIODevice::ReadOnly)) {
-        const auto object=QJsonDocument::fromJson(metadata.read(65536)).object();
-        const double rate=object.value(QStringLiteral("sample_rate_hz")).toDouble();
-        const int index=m_sampleRate->findData(rate);
-        if(index>=0) m_sampleRate->setCurrentIndex(index);
-        const double frequency=object.value(QStringLiteral("frequency_hz")).toDouble();
+        const auto document=QJsonDocument::fromJson(metadata.read(65536));
+        if(!document.isObject()) {
+            QMessageBox::warning(this,QStringLiteral("I/Q"),QStringLiteral("Некорректный файл метаданных."));
+            return;
+        }
+        const QJsonObject object=document.object();
+        if(sigmf) {
+            const QJsonObject global=object.value(QStringLiteral("global")).toObject();
+            const QString datatype=global.value(QStringLiteral("core:datatype")).toString();
+            // Unlike cs8, many downloaded SigMF recordings are cf32/ci16.
+            // Treating their bytes as signed I/Q silently breaks P1 and FEC.
+            if(datatype!=QStringLiteral("ci8") &&
+               datatype!=QStringLiteral("ci8_le") &&
+               datatype!=QStringLiteral("ci8_be")) {
+                QMessageBox::warning(this,QStringLiteral("I/Q"),
+                    QStringLiteral("SigMF содержит %1. Сейчас поддерживается только signed 8-bit complex (ci8).")
+                    .arg(datatype.isEmpty()?QStringLiteral("неизвестный формат"):datatype));
+                return;
+            }
+            rate=global.value(QStringLiteral("core:sample_rate")).toDouble();
+            const auto captures=object.value(QStringLiteral("captures")).toArray();
+            if(!captures.isEmpty()) frequency=captures[0].toObject().value(QStringLiteral("core:frequency")).toDouble();
+        } else {
+            rate=object.value(QStringLiteral("sample_rate_hz")).toDouble();
+            frequency=object.value(QStringLiteral("frequency_hz")).toDouble();
+        }
+        if(rate>0) {
+            const int index=m_sampleRate->findData(rate);
+            if(index<0) {
+                QMessageBox::warning(this,QStringLiteral("I/Q"),
+                    QStringLiteral("Частота дискретизации %1 MS/s не поддерживается.").arg(rate/1e6));
+                return;
+            }
+            m_sampleRate->setCurrentIndex(index);
+        } else if(sigmf) {
+            QMessageBox::warning(this,QStringLiteral("I/Q"),
+                QStringLiteral("SigMF не содержит частоту дискретизации."));
+            return;
+        }
         if(frequency>=1e6 && frequency<=6e9) m_frequencyMhz->setValue(frequency/1e6);
-        appendLog(QStringLiteral("Метаданные I/Q прочитаны: %1 MS/s").arg(m_sampleRate->currentData().toDouble()/1e6));
+        appendLog(QStringLiteral("Метаданные I/Q: %1 MS/s, файл %2")
+            .arg(m_sampleRate->currentData().toDouble()/1e6).arg(metadataPath));
+    } else if(sigmf) {
+        QMessageBox::warning(this,QStringLiteral("I/Q"),
+            QStringLiteral("Для SigMF нужен соседний файл .sigmf-meta."));
+        return;
     }
-    m_iqPath=path;appendLog(QStringLiteral("Источник I/Q: ")+path);startReceiver();
+    stopReceiver();m_iqPath=path;
+    appendLog(QStringLiteral("Источник I/Q: ")+path);
+    startReceiver();
 }
 void MainWindow::savePreferences()
 {
     QSettings cfg(QCoreApplication::applicationDirPath()+"/settings.ini",QSettings::IniFormat);
+    cfg.setValue("backend",m_backendCombo->currentData().toInt());
     cfg.setValue("frequencyMHz",m_frequencyMhz->value());cfg.setValue("lna",m_lnaGain->value());cfg.setValue("vga",m_vgaGain->value());cfg.setValue("amp",m_rfAmp->isChecked());
     cfg.setValue("rate",m_sampleRate->currentIndex());cfg.setValue("dwell",m_scanDwell->value());cfg.setValue("vlc",m_vlcPath->text());cfg.setValue("port",m_udpPort->value());
     cfg.beginWriteArray("channels",m_found->rowCount());
@@ -1093,8 +1279,11 @@ void MainWindow::savePreferences()
 void MainWindow::loadPreferences()
 {
     QSettings cfg(QCoreApplication::applicationDirPath()+"/settings.ini",QSettings::IniFormat);
+    const int backend=cfg.value("backend",m_backendCombo->currentData().toInt()).toInt();
+    const int backendIndex=m_backendCombo->findData(backend);
+    if(backendIndex>=0)m_backendCombo->setCurrentIndex(backendIndex);
     m_frequencyMhz->setValue(cfg.value("frequencyMHz",586).toDouble());m_lnaGain->setValue(cfg.value("lna",2).toInt());m_vgaGain->setValue(cfg.value("vga",8).toInt());m_rfAmp->setChecked(cfg.value("amp",false).toBool());
-    m_sampleRate->setCurrentIndex(qBound(0,cfg.value("rate",0).toInt(),4));m_scanDwell->setValue(cfg.value("dwell",12).toInt());m_udpPort->setValue(cfg.value("port",7654).toInt());
+    m_sampleRate->setCurrentIndex(qBound(0,cfg.value("rate",0).toInt(),m_sampleRate->count()-1));m_scanDwell->setValue(cfg.value("dwell",12).toInt());m_udpPort->setValue(cfg.value("port",7654).toInt());
     QString vlc=cfg.value("vlc").toString();if(QFileInfo::exists(vlc))m_vlcPath->setText(vlc);
     int count=qMin(10000,cfg.beginReadArray("channels"));m_found->setRowCount(count);
     for(int row=0;row<count;++row){cfg.setArrayIndex(row);quint64 frequency=cfg.value("frequency").toULongLong();auto *item=new QTableWidgetItem(QString::number(frequency/1e6,'f',3));item->setData(Qt::UserRole,frequency);m_found->setItem(row,0,item);m_found->setItem(row,1,new QTableWidgetItem(cfg.value("sid").toString()));m_found->setItem(row,2,new QTableWidgetItem(cfg.value("name").toString()));}cfg.endArray();{QSignalBlocker block(m_channelCombo);m_channelCombo->setCurrentIndex(m_channelCombo->findData(quint64(std::llround(m_frequencyMhz->value()*1e6))));}updatePipeline();

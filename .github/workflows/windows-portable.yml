@@ -4,15 +4,52 @@ on:
   workflow_dispatch:
   push:
     branches: [ main, master ]
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: windows-portable-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  real-iq-probe:
+    name: Inspect real 546 MHz broadcast sample
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download externally recorded DVB-T2 signal
+        run: |
+          mkdir -p real-iq/raw
+          curl -fSL --retry 2 --connect-timeout 15 --max-time 120 \
+            'https://www.radioscanner.ru/files/download/file18613/t2.rar' -o real-iq/t2.rar
+          sha256sum real-iq/t2.rar
+          file real-iq/t2.rar
+          test "$(stat -c%s real-iq/t2.rar)" -gt 1000000
+      - name: Identify native IQ format, contents and extracted files
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends 7zip python3-numpy
+          7z l -slt real-iq/t2.rar | head -150
+          7z x -y -oreal-iq/raw real-iq/t2.rar
+          test "$(du -sb real-iq/raw | cut -f1)" -lt 300000000
+          python3 tests/probe_real_iq.py real-iq/raw
+          python3 tests/convert_real_iq.py real-iq/raw/t2/_VV.CPX real-iq/Russia_546MHz_9.142857MSps.cs8
+          file real-iq/Russia_546MHz_9.142857MSps.cs8
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: Real-2015-Russian-DVB-T2-IQ
+          path: real-iq/
+          retention-days: 7
+
   native-tests:
     name: Native receiver regressions (ASan and UBSan)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
       - name: Install native test dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends g++ ripgrep qtbase5-dev qtbase5-dev-tools libfftw3-dev libusb-1.0-0-dev gnuradio python3-scipy
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends g++ ripgrep qtbase5-dev qtbase5-dev-tools libfftw3-dev libusb-1.0-0-dev gnuradio python3-scipy ffmpeg
       - name: Run receiver, FEC, transport and GUI tests
         env:
           QT_NATIVE: /usr
@@ -31,6 +68,102 @@ jobs:
           NO_GUI=0 SKIP_CORE=1 GUI_TEST=gui_iq_replay_test bash build-tests-native.sh "$RUNNER_TEMP/gr-reference/input.cs8" "$RUNNER_TEMP/gr-gui-output.ts"
           python3 tests/gnuradio_reference.py verify "$RUNNER_TEMP/gr-reference" "$RUNNER_TEMP/gr-gui-output.ts"
           cp "$RUNNER_TEMP/gr-gui-output.ts" "$RUNNER_TEMP/gr-reference/expected.ts"
+      - name: Stress independent DVB-T2 RF-to-TS under echoes and carrier offset
+        env:
+          QT_NATIVE: /usr
+          SANITIZE: '1'
+          NO_GUI: '1'
+          TESTS: iq_replay_test
+        run: |
+          python3 tests/gnuradio_reference.py generate "$RUNNER_TEMP/gr-echo" --frames 4 --snr 22 --echo-delay 48 --echo-gain 0.15 --cfo-hz 70
+          bash build-tests-native.sh "$RUNNER_TEMP/gr-echo/input.cs8" "$RUNNER_TEMP/gr-echo-output.ts"
+          python3 tests/gnuradio_reference.py verify "$RUNNER_TEMP/gr-echo" "$RUNNER_TEMP/gr-echo-output.ts"
+
+      - name: Export actual Linux DVB-T2 I/Q replay binary for independent capture analysis
+        uses: actions/upload-artifact@v7
+        with:
+          name: HackRFT2Viewer-Linux-IQ-Replay-ASAN
+          path: build-native/iq_replay_test
+          retention-days: 7
+          if-no-files-found: error
+      - name: Replay downloaded real DVB-T2 broadcast IQ through native demodulator
+        env:
+          QT_NATIVE: /usr
+          SANITIZE: '1'
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/real-rf"
+          curl -fSL --retry 2 --max-time 120 'https://www.radioscanner.ru/files/download/file18613/t2.rar' -o "$RUNNER_TEMP/real-rf/t2.rar"
+          sudo apt-get install -y --no-install-recommends 7zip
+          7z x -y -o"$RUNNER_TEMP/real-rf" "$RUNNER_TEMP/real-rf/t2.rar"
+          python3 tests/convert_real_iq.py "$RUNNER_TEMP/real-rf/t2/_VV.CPX" "$RUNNER_TEMP/real-rf/real.cs8"
+          if timeout 45 build-native/iq_replay_test "$RUNNER_TEMP/real-rf/real.cs8" "$RUNNER_TEMP/real-rf/recovered.ts" 9142857.142857143 > "$RUNNER_TEMP/real-rf/replay.log" 2>&1; then
+            code=0
+          else
+            code=$?
+          fi
+          tail -100 "$RUNNER_TEMP/real-rf/replay.log"
+          if [ "$code" -eq 4 ]; then echo 'FAIL: unexpected real capture buffer drops'; exit 4; fi
+          if [ "$code" -ne 0 ] && [ "$code" -ne 3 ]; then exit "$code"; fi
+          # 104 ms is not a complete long DVB-T2 frame, so no-TS is an
+          # expected observation, NOT a successful playback validation.
+          echo "Real 2015 capture replay exit=$code (3=no complete TS)."
+      - name: Validate recovered real video and audio from GNU Radio DVB-T2 IQ
+        env:
+          QT_NATIVE: /usr
+          SANITIZE: '1'
+          TESTS: iq_replay_test
+          NO_GUI: '1'
+        run: |
+          python3 tests/gnuradio_reference.py generate "$RUNNER_TEMP/gr-av" --frames 5 --snr 20 --av
+          bash build-tests-native.sh "$RUNNER_TEMP/gr-av/input.cs8" "$RUNNER_TEMP/gr-av-cli.ts"
+          python3 tests/gnuradio_reference.py verify "$RUNNER_TEMP/gr-av" "$RUNNER_TEMP/gr-av-cli.ts"
+          EXPECTED_SERVICE=Service01 NO_GUI=0 SKIP_CORE=1 GUI_TEST=gui_iq_replay_test bash build-tests-native.sh "$RUNNER_TEMP/gr-av/input.cs8" "$RUNNER_TEMP/gr-av-gui.ts"
+          python3 tests/gnuradio_reference.py verify "$RUNNER_TEMP/gr-av" "$RUNNER_TEMP/gr-av-gui.ts"
+          cp "$RUNNER_TEMP/gr-av-gui.ts" "$RUNNER_TEMP/gr-av/expected.ts"
+      - name: Verify independent OnAir 3.0.0 also recovers playable video and audio
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          test -s "$RUNNER_TEMP/gr-av/input.cs8"
+          curl -fSL --retry 2 --max-time 180 \
+            https://github.com/adswill/OnAir/releases/download/v3.0.0/onair-3.0.0-linux-x86_64-portable.tar.gz \
+            -o "$RUNNER_TEMP/onair.tar.gz"
+          mkdir -p "$RUNNER_TEMP/onair"
+          tar -xzf "$RUNNER_TEMP/onair.tar.gz" -C "$RUNNER_TEMP/onair"
+          cli="$(find "$RUNNER_TEMP/onair" -type f -name onair-cli -print -quit)"
+          test -n "$cli"
+          chmod +x "$cli"
+          "$cli" --version
+          pushd "$(dirname "$cli")"
+          timeout 90 "$cli" --file "$RUNNER_TEMP/gr-av/input.cs8" \
+            --format cs8 --rate 10 --standard t2 --freq 586 --bw 8 --secs 20 \
+            --compute cpu --ts "$RUNNER_TEMP/onair-av.ts" \
+            > "$RUNNER_TEMP/onair-av.log" 2>&1
+          popd
+          tail -45 "$RUNNER_TEMP/onair-av.log"
+          test -s "$RUNNER_TEMP/onair-av.ts"
+          ffprobe -v error -show_entries stream=codec_type,codec_name -of json "$RUNNER_TEMP/onair-av.ts" \
+            > "$RUNNER_TEMP/onair-av-probe.json"
+          python3 - "$RUNNER_TEMP/onair-av-probe.json" <<'PY'
+          import json,sys
+          with open(sys.argv[1]) as f: streams=json.load(f)['streams']
+          codecs={(s.get('codec_type'),s.get('codec_name')) for s in streams}
+          print('OnAir independent full-RF-to-video/audio:',sorted(codecs))
+          assert ('video','mpeg2video') in codecs and ('audio','mp2') in codecs
+          PY
+      - name: Save independent Windows AV receiver fixture
+        uses: actions/upload-artifact@v7
+        with:
+          name: Independent-DVB-T2-Video-Audio-Fixture
+          path: |
+            ${{ runner.temp }}/gr-av/input.cs8
+            ${{ runner.temp }}/gr-av/fixture.json
+            ${{ runner.temp }}/gr-av/expected.ts
+          retention-days: 7
+          if-no-files-found: error
+
       - name: Save independent Windows receiver fixture
         uses: actions/upload-artifact@v7
         with:
@@ -52,7 +185,7 @@ jobs:
       - name: Upload full source archive
         uses: actions/upload-artifact@v7
         with:
-          name: HackRFT2Viewer-Full-Source-1.4.2-RC2
+          name: HackRFT2Viewer-Full-Source-1.4.2-RC3
           path: |
             .
             !.git/**
@@ -62,6 +195,8 @@ jobs:
   build-windows:
     needs: native-tests
     runs-on: windows-latest
+    permissions:
+      contents: write
     defaults:
       run:
         shell: msys2 {0}
@@ -97,16 +232,16 @@ jobs:
             if [[ -f "$p" ]]; then EXE="$p"; break; fi
           done
           test -n "$EXE"
-          mkdir -p build-portable/HackRFT2Viewer-Portable-1.4.2-RC2
-          cp "$EXE" build-portable/HackRFT2Viewer-Portable-1.4.2-RC2/HackRFT2Viewer.exe
+          mkdir -p build-portable/HackRFT2Viewer-Portable-1.4.2-RC3
+          cp "$EXE" build-portable/HackRFT2Viewer-Portable-1.4.2-RC3/HackRFT2Viewer.exe
           "$QMAKE" HackRFT2Viewer.pro CONFIG+=release CONFIG+=gui_iq_test
           /mingw64/bin/mingw32-make.exe -j2
-          cp release/GuiIqReplayTest.exe build-portable/HackRFT2Viewer-Portable-1.4.2-RC2/
+          cp release/GuiIqReplayTest.exe build-portable/HackRFT2Viewer-Portable-1.4.2-RC3/
 
       - name: Deploy Qt runtime
         run: |
           set -euxo pipefail
-          DIST=build-portable/HackRFT2Viewer-Portable-1.4.2-RC2
+          DIST=build-portable/HackRFT2Viewer-Portable-1.4.2-RC3
           WINDEPLOYQT="$(command -v windeployqt-qt5 || command -v windeployqt)"
           echo "Using windeployqt: $WINDEPLOYQT"
           "$WINDEPLOYQT" --release --no-translations "$DIST/HackRFT2Viewer.exe"
@@ -120,7 +255,7 @@ jobs:
       - name: Collect all MinGW runtime DLL dependencies
         run: |
           set -euxo pipefail
-          DIST=build-portable/HackRFT2Viewer-Portable-1.4.2-RC2
+          DIST=build-portable/HackRFT2Viewer-Portable-1.4.2-RC3
           MINGW_BIN_WIN="$(cygpath -w /mingw64/bin)"
           NTLDD=/mingw64/bin/ntldd.exe
 
@@ -157,7 +292,7 @@ jobs:
       - name: Add docs and licenses
         run: |
           set -euxo pipefail
-          DIST=build-portable/HackRFT2Viewer-Portable-1.4.2-RC2
+          DIST=build-portable/HackRFT2Viewer-Portable-1.4.2-RC3
           for f in README-RU.md VALIDATION.md CHANGELOG.md DIAGNOSTIC-RUN-RU.txt THIRD-PARTY-NOTICES.md HACKRF-LICENSE.txt COPYING-GPL-3.0.txt; do
             [[ -f "$f" ]] && cp "$f" "$DIST/"
           done
@@ -187,8 +322,42 @@ jobs:
           $src = Join-Path $tmp 'vlc-3.0.23'
           if (-not (Test-Path $src)) { throw "VLC directory not found after extraction: $src" }
 
-          $dst = Join-Path $PWD 'build-portable/HackRFT2Viewer-Portable-1.4.2-RC2/vlc'
+          $dst = Join-Path $PWD 'build-portable/HackRFT2Viewer-Portable-1.4.2-RC3/vlc'
           Copy-Item -Recurse -Force $src $dst
+
+      - name: Bundle OnAir 3.0.0 real-world DVB-T2 receiver and command line interface
+        shell: pwsh
+        timeout-minutes: 8
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = 'https://github.com/adswill/OnAir/releases/download/v3.0.0/'
+          $archiveName = 'OnAir-3.0.0-windows-x64.zip'
+          $zip = Join-Path $env:RUNNER_TEMP $archiveName
+          $sums = Join-Path $env:RUNNER_TEMP 'onair-sha256sums.txt'
+          Invoke-WebRequest -Uri ($base + $archiveName) -OutFile $zip
+          Invoke-WebRequest -Uri ($base + 'SHA256SUMS') -OutFile $sums
+          $entry = Get-Content $sums | Where-Object { $_ -match [regex]::Escape($archiveName) } | Select-Object -First 1
+          if (-not $entry -or -not ($entry -match '^([0-9A-Fa-f]{64})\s+\*?')) {
+              throw "Cannot verify the OnAir release checksum: $entry"
+          }
+          $expected = $Matches[1].ToLowerInvariant()
+          $actual = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "OnAir release checksum mismatch: $actual" }
+          if ((Get-Item $zip).Length -lt 90000000) { throw 'OnAir archive size unexpectedly small' }
+          $tmp = Join-Path $env:RUNNER_TEMP 'onair-extract'
+          Expand-Archive -Path $zip -DestinationPath $tmp -Force
+          $src = Join-Path $tmp 'OnAir-3.0.0-windows-x64'
+          if (-not (Test-Path (Join-Path $src 'onair-cli.exe'))) { throw 'OnAir CLI missing' }
+          $dst = Join-Path $PWD 'build-portable/HackRFT2Viewer-Portable-1.4.2-RC3/OnAir'
+          Copy-Item -Recurse -Force $src $dst
+          if (-not (Test-Path (Join-Path $dst 'OnAir.exe'))) { throw 'OnAir GUI missing' }
+          # Prove that the packaged CLI can start without a radio attached.
+          Push-Location $dst
+          try {
+              & (Join-Path $dst 'onair-cli.exe') --version
+              if ($LASTEXITCODE -ne 0) { throw "OnAir CLI --version failed with $LASTEXITCODE" }
+          } finally { Pop-Location }
+          Write-Host "OnAir 3.0.0 bundled and checked ($((Get-Item $zip).Length) archive bytes)"
 
       - name: Download independently verified RF fixture
         uses: actions/download-artifact@v8
@@ -201,7 +370,7 @@ jobs:
         timeout-minutes: 3
         run: |
           $ErrorActionPreference = 'Stop'
-          $dist = (Resolve-Path 'build-portable/HackRFT2Viewer-Portable-1.4.2-RC2').Path
+          $dist = (Resolve-Path 'build-portable/HackRFT2Viewer-Portable-1.4.2-RC3').Path
           $fixture = (Resolve-Path 'windows-rf-fixture').Path
           $output = Join-Path $fixture 'windows-output.ts'
           # Resolve libraries exclusively from the portable folder and Windows.
@@ -219,26 +388,103 @@ jobs:
           $actual = (Get-FileHash -Algorithm SHA256 $output).Hash
           if ($actual -ne $expected) { throw "Windows TS differs from the independently verified source: $actual" }
           Write-Host "Windows GUI RF-to-TS PASS: $((Get-Item $output).Length) exact bytes, SHA256 $actual"
-          Remove-Item $exe
+          # Keep the packaged GUI test binary for the following AV fixture
+
+      - name: Download independent DVB-T2 video and audio fixture
+        uses: actions/download-artifact@v8
+        with:
+          name: Independent-DVB-T2-Video-Audio-Fixture
+          path: windows-av-fixture
+
+      - name: Verify packaged Windows demodulator returns exact playable AV TS
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dist = (Resolve-Path 'build-portable/HackRFT2Viewer-Portable-1.4.2-RC3').Path
+          $fixture = (Resolve-Path 'windows-av-fixture').Path
+          $output = Join-Path $fixture 'windows-av-output.ts'
+          $env:PATH = "$dist;$env:SystemRoot\System32;$env:SystemRoot"
+          $env:QT_OPENGL = 'software'
+          $env:QT_PLUGIN_PATH = $dist
+          $env:QT_QPA_PLATFORM_PLUGIN_PATH = Join-Path $dist 'platforms'
+          $exe = Join-Path $dist 'HackRFT2Viewer.exe'
+          # GuiIqReplayTest was removed by the preceding packaged gate: rebuild
+          # not needed; save the test runner next to the portable application.
+          $runner = Join-Path $dist 'GuiIqReplayTest.exe'
+          if (-not (Test-Path $runner)) { throw 'Missing GUI test runner for AV fixture' }
+          $env:EXPECTED_SERVICE = 'Service01'
+          $arguments = '"{0}" "{1}"' -f (Join-Path $fixture 'input.cs8'), $output
+          $process = Start-Process -FilePath $runner -ArgumentList $arguments -PassThru -NoNewWindow
+          if (-not $process.WaitForExit(90000)) { $process.Kill(); throw 'Windows AV GUI test timed out' }
+          if ($process.ExitCode -ne 0) { throw "Windows AV GUI failed: $($process.ExitCode)" }
+          $expected = (Get-FileHash -Algorithm SHA256 (Join-Path $fixture 'expected.ts')).Hash
+          $actual = (Get-FileHash -Algorithm SHA256 $output).Hash
+          if ($actual -ne $expected) { throw "Windows AV transport mismatch: $actual" }
+          Write-Host "Windows exact video+audio transport PASS: $((Get-Item $output).Length) bytes"
+          Remove-Item $runner
 
       - name: Package and checksum
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $base = Join-Path $PWD 'build-portable'
-          $dir = Join-Path $base 'HackRFT2Viewer-Portable-1.4.2-RC2'
-          $zip = Join-Path $base 'HackRFT2Viewer-Portable-1.4.2-RC2.zip'
+          $dir = Join-Path $base 'HackRFT2Viewer-Portable-1.4.2-RC3'
+          $zip = Join-Path $base 'HackRFT2Viewer-Portable-1.4.2-RC3.zip'
           Compress-Archive -Path $dir -DestinationPath $zip -CompressionLevel Optimal -Force
           $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
-          "$hash  HackRFT2Viewer-Portable-1.4.2-RC2.zip" | Set-Content -Encoding ascii (Join-Path $base 'SHA256-1.4.2-RC2.txt')
+          "$hash  HackRFT2Viewer-Portable-1.4.2-RC3.zip" | Set-Content -Encoding ascii (Join-Path $base 'SHA256-1.4.2-RC3.txt')
           Get-Item $zip | Format-List FullName,Length
-          Get-Content (Join-Path $base 'SHA256-1.4.2-RC2.txt')
+          Get-Content (Join-Path $base 'SHA256-1.4.2-RC3.txt')
 
       - name: Upload portable artifact
         uses: actions/upload-artifact@v7
         with:
-          name: HackRFT2Viewer-Portable-1.4.2-RC2
+          name: HackRFT2Viewer-Portable-1.4.2-RC3
           path: |
-            build-portable/HackRFT2Viewer-Portable-1.4.2-RC2.zip
-            build-portable/SHA256-1.4.2-RC2.txt
+            build-portable/HackRFT2Viewer-Portable-1.4.2-RC3.zip
+            build-portable/SHA256-1.4.2-RC3.txt
           if-no-files-found: error
+
+      - name: Update one permanent latest GitHub Release after ALL Windows tests
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        shell: pwsh
+        timeout-minutes: 8
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sha = $env:GITHUB_SHA
+          $remote = git ls-remote origin refs/heads/main
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot determine current main HEAD' }
+          $headSha = ($remote -split '\s+')[0]
+          if ($headSha -ne $sha) {
+            Write-Host "Newer main commit exists ($headSha); skip obsolete $sha"
+            exit 0
+          }
+          $dir = Join-Path $PWD 'build-portable'
+          $archive = Join-Path $dir 'HackRFT2Viewer-Portable-Windows-x64.zip'
+          Copy-Item (Join-Path $dir 'HackRFT2Viewer-Portable-1.4.2-RC3.zip') $archive -Force
+          $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          $sums = Join-Path $dir 'SHA256SUMS.txt'
+          "$hash  HackRFT2Viewer-Portable-Windows-x64.zip" | Set-Content -Encoding ascii $sums
+          $title = "HackRFT2Viewer latest ($($sha.Substring(0,12)))"
+          $notes = "Latest tested Windows x64 build from main commit $sha. Includes bundled VLC and OnAir. GNU Radio RF-to-TS, video/audio and Windows checks passed. Live HackRF reception not yet independently certified."
+          gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/latest" --jq '.id' *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh api --method PATCH "repos/$env:GITHUB_REPOSITORY/git/refs/tags/latest" -f sha="$sha" -F force=true
+            if ($LASTEXITCODE -ne 0) { throw 'Could not advance latest git tag' }
+            $id = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/latest" --jq '.id'
+            if ($LASTEXITCODE -ne 0) { throw 'Could not read latest release ID' }
+            gh api --method PATCH "repos/$env:GITHUB_REPOSITORY/releases/$id" -f target_commitish="$sha" -f name="$title" -f body="$notes"
+            if ($LASTEXITCODE -ne 0) { throw 'Could not update latest release metadata' }
+            gh release upload latest "$archive#HackRFT2Viewer-Portable-Windows-x64.zip" "$sums#SHA256SUMS.txt" --clobber --repo "$env:GITHUB_REPOSITORY"
+            if ($LASTEXITCODE -ne 0) { throw 'Could not refresh latest assets' }
+            gh release edit latest --latest --repo "$env:GITHUB_REPOSITORY"
+            if ($LASTEXITCODE -ne 0) { throw 'Could not mark latest release' }
+          } else {
+            gh release create latest "$archive#HackRFT2Viewer-Portable-Windows-x64.zip" "$sums#SHA256SUMS.txt" --target "$sha" --title "$title" --notes "$notes" --latest --repo "$env:GITHUB_REPOSITORY"
+            if ($LASTEXITCODE -ne 0) { throw 'Could not create latest release' }
+          }
+          Write-Host "Updated Release latest => $sha"
+
