@@ -445,3 +445,46 @@ jobs:
             build-portable/HackRFT2Viewer-Portable-1.4.2-RC3.zip
             build-portable/SHA256-1.4.2-RC3.txt
           if-no-files-found: error
+
+      - name: Update one permanent latest GitHub Release after ALL Windows tests
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        shell: pwsh
+        timeout-minutes: 8
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sha = $env:GITHUB_SHA
+          $remote = git ls-remote origin refs/heads/main
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot determine current main HEAD' }
+          $headSha = ($remote -split '\s+')[0]
+          if ($headSha -ne $sha) {
+            Write-Host "Newer main commit exists ($headSha); skip obsolete $sha"
+            exit 0
+          }
+          $dir = Join-Path $PWD 'build-portable'
+          $archive = Join-Path $dir 'HackRFT2Viewer-Portable-Windows-x64.zip'
+          Copy-Item (Join-Path $dir 'HackRFT2Viewer-Portable-1.4.2-RC3.zip') $archive -Force
+          $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          $sums = Join-Path $dir 'SHA256SUMS.txt'
+          "$hash  HackRFT2Viewer-Portable-Windows-x64.zip" | Set-Content -Encoding ascii $sums
+          $title = "HackRFT2Viewer latest ($($sha.Substring(0,12)))"
+          $notes = "Latest tested Windows x64 build from main commit $sha. Includes bundled VLC and OnAir. GNU Radio RF-to-TS, video/audio and Windows checks passed. Live HackRF reception not yet independently certified."
+          gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/latest" --jq '.id' *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh api --method PATCH "repos/$env:GITHUB_REPOSITORY/git/refs/tags/latest" -f sha="$sha" -F force=true
+            if ($LASTEXITCODE -ne 0) { throw 'Could not advance latest git tag' }
+            $id = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/latest" --jq '.id'
+            if ($LASTEXITCODE -ne 0) { throw 'Could not read latest release ID' }
+            gh api --method PATCH "repos/$env:GITHUB_REPOSITORY/releases/$id" -f target_commitish="$sha" -f name="$title" -f body="$notes"
+            if ($LASTEXITCODE -ne 0) { throw 'Could not update latest release metadata' }
+            gh release upload latest "$archive#HackRFT2Viewer-Portable-Windows-x64.zip" "$sums#SHA256SUMS.txt" --clobber --repo "$env:GITHUB_REPOSITORY"
+            if ($LASTEXITCODE -ne 0) { throw 'Could not refresh latest assets' }
+            gh release edit latest --latest --repo "$env:GITHUB_REPOSITORY"
+            if ($LASTEXITCODE -ne 0) { throw 'Could not mark latest release' }
+          } else {
+            gh release create latest "$archive#HackRFT2Viewer-Portable-Windows-x64.zip" "$sums#SHA256SUMS.txt" --target "$sha" --title "$title" --notes "$notes" --latest --repo "$env:GITHUB_REPOSITORY"
+            if ($LASTEXITCODE -ne 0) { throw 'Could not create latest release' }
+          }
+          Write-Host "Updated Release latest => $sha"
+
